@@ -12,6 +12,7 @@ import aiohttp
 from nonebot import logger, on_type
 from nonebot.adapters import Bot
 from nonebot.adapters.qq.event import (
+    C2CMessageCreateEvent,
     GroupAtMessageCreateEvent,
     GroupMsgReceiveEvent,
     GroupMsgRejectEvent,
@@ -23,7 +24,9 @@ MESSAGE_LOG_FILE = LOG_DIR / "group_messages.jsonl"
 NOTICE_LOG_FILE = LOG_DIR / "group_notices.jsonl"
 IMAGE_LOG_FILE = LOG_DIR / "group_images.jsonl"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".heic"}
-IMAGE_SAVE_ROOT = Path(os.getenv("GROUP_IMAGE_SAVE_DIR", "data/group_images"))
+IMAGE_SAVE_ROOT = Path(
+    os.getenv("CHAT_IMAGE_SAVE_DIR", os.getenv("GROUP_IMAGE_SAVE_DIR", "data/chat_images"))
+)
 IMAGE_TIMEOUT_SEC = float(os.getenv("GROUP_IMAGE_TIMEOUT_SEC", "20"))
 
 
@@ -69,7 +72,77 @@ async def _download_image_bytes(url: str) -> bytes:
             return await response.read()
 
 
+async def _save_message_images(
+    *,
+    bot: Bot,
+    event_name: str,
+    chat_type: str,
+    chat_id: str,
+    message_id: str,
+    user_id: str,
+    attachments: list[Any] | None,
+) -> None:
+    image_dir = IMAGE_SAVE_ROOT / chat_type / chat_id
+    for idx, attachment in enumerate(attachments or []):
+        source_url = attachment.url
+        if not source_url or not _is_image_attachment(
+            attachment.content_type, attachment.filename, source_url
+        ):
+            continue
+
+        entry_base = {
+            "logged_at": datetime.now(UTC).isoformat(),
+            "self_id": bot.self_id,
+            "event_name": event_name,
+            "chat_type": chat_type,
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "message_id": message_id,
+            "attachment_index": idx,
+            "source_url": source_url,
+            "attachment": attachment.model_dump(mode="json"),
+        }
+        try:
+            raw_bytes = await _download_image_bytes(source_url)
+            ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            original_name = _choose_filename(attachment.filename, idx, source_url)
+            saved_name = f"{ts}_{message_id}_{idx}_{original_name}"
+            save_path = image_dir / saved_name
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            save_path.write_bytes(raw_bytes)
+
+            _append_json_line(
+                IMAGE_LOG_FILE,
+                {
+                    **entry_base,
+                    "status": "success",
+                    "saved_path": str(save_path),
+                    "size": len(raw_bytes),
+                },
+            )
+            logger.info(
+                "Saved chat image: chat_type={} chat_id={} path={} size={}",
+                chat_type,
+                chat_id,
+                save_path,
+                len(raw_bytes),
+            )
+        except Exception as exc:
+            _append_json_line(
+                IMAGE_LOG_FILE,
+                {**entry_base, "status": "failed", "error": str(exc)},
+            )
+            logger.warning(
+                "Failed to save chat image: chat_type={} chat_id={} url={} error={}",
+                chat_type,
+                chat_id,
+                source_url,
+                exc,
+            )
+
+
 group_message_logger = on_type(GroupAtMessageCreateEvent, priority=1, block=False)
+c2c_message_logger = on_type(C2CMessageCreateEvent, priority=1, block=False)
 group_receive_notice_logger = on_type(GroupMsgReceiveEvent, priority=1, block=False)
 group_reject_notice_logger = on_type(GroupMsgRejectEvent, priority=1, block=False)
 
@@ -96,51 +169,28 @@ async def handle_group_message(bot: Bot, event: GroupAtMessageCreateEvent) -> No
         event.id,
     )
 
-    day = datetime.now(UTC).strftime("%Y-%m-%d")
-    image_dir = IMAGE_SAVE_ROOT / day / event.group_openid
-    for idx, attachment in enumerate(event.attachments or []):
-        source_url = attachment.url
-        if not source_url or not _is_image_attachment(
-            attachment.content_type, attachment.filename, source_url
-        ):
-            continue
+    await _save_message_images(
+        bot=bot,
+        event_name=event.get_event_name(),
+        chat_type="group",
+        chat_id=event.group_openid,
+        message_id=event.id,
+        user_id=event.get_user_id(),
+        attachments=event.attachments,
+    )
 
-        entry_base = {
-            "logged_at": datetime.now(UTC).isoformat(),
-            "self_id": bot.self_id,
-            "event_name": event.get_event_name(),
-            "group_openid": event.group_openid,
-            "user_id": event.get_user_id(),
-            "message_id": event.id,
-            "attachment_index": idx,
-            "source_url": source_url,
-            "attachment": attachment.model_dump(mode="json"),
-        }
-        try:
-            raw_bytes = await _download_image_bytes(source_url)
-            ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-            original_name = _choose_filename(attachment.filename, idx, source_url)
-            saved_name = f"{ts}_{event.id}_{idx}_{original_name}"
-            save_path = image_dir / saved_name
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            save_path.write_bytes(raw_bytes)
 
-            _append_json_line(
-                IMAGE_LOG_FILE,
-                {
-                    **entry_base,
-                    "status": "success",
-                    "saved_path": str(save_path),
-                    "size": len(raw_bytes),
-                },
-            )
-            logger.info("Saved group image: path={} size={}", save_path, len(raw_bytes))
-        except Exception as exc:
-            _append_json_line(
-                IMAGE_LOG_FILE,
-                {**entry_base, "status": "failed", "error": str(exc)},
-            )
-            logger.warning("Failed to save group image: url={} error={}", source_url, exc)
+@c2c_message_logger.handle()
+async def handle_c2c_message(bot: Bot, event: C2CMessageCreateEvent) -> None:
+    await _save_message_images(
+        bot=bot,
+        event_name=event.get_event_name(),
+        chat_type="private",
+        chat_id=event.get_user_id(),
+        message_id=event.id,
+        user_id=event.get_user_id(),
+        attachments=event.attachments,
+    )
 
 
 @group_receive_notice_logger.handle()

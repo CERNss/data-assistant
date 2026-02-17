@@ -17,16 +17,19 @@
 
 ## Approach
 
-1. 在 `GroupAtMessageCreateEvent` 处理器内遍历 `attachments`。
+1. 在 `GroupAtMessageCreateEvent` 与 `C2CMessageCreateEvent` 处理器内遍历 `attachments`。
 2. 识别图片附件（`content_type` 以 `image/` 开头，或文件名后缀为常见图片格式）。
 3. 使用异步 HTTP 客户端下载附件 URL 二进制数据。
-4. 保存路径规则：`<GROUP_IMAGE_SAVE_DIR>/<YYYY-MM-DD>/<group_openid>/`。
+4. 保存路径规则：
+   - 群聊：`<CHAT_IMAGE_SAVE_DIR>/group/<group_openid>/`
+   - 私聊：`<CHAT_IMAGE_SAVE_DIR>/private/<user_openid>/`
 5. 文件名规则：`<event_timestamp>_<message_id>_<index>_<safe_filename>`，避免冲突。
 6. 写入 `data/group_images.jsonl` 审计日志（成功与失败都记录）。
 
 ## Config
 
-- `GROUP_IMAGE_SAVE_DIR`：图片保存根目录，默认 `data/group_images`。
+- `CHAT_IMAGE_SAVE_DIR`：图片保存根目录，默认 `data/chat_images`。
+- `GROUP_IMAGE_SAVE_DIR`：兼容旧变量名，若未配置 `CHAT_IMAGE_SAVE_DIR` 则使用它。
 - `GROUP_IMAGE_TIMEOUT_SEC`：下载超时秒数，默认 `20`。
 
 ## Risks

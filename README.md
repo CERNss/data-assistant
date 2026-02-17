@@ -25,7 +25,7 @@ DRIVER=~fastapi+~aiohttp
 HOST=127.0.0.1
 PORT=8080
 QQ_BOTS=[{"id":"<appid>","token":"<token>","secret":"<secret>"}]
-GROUP_IMAGE_SAVE_DIR=data/group_images
+CHAT_IMAGE_SAVE_DIR=data/chat_images
 GROUP_IMAGE_TIMEOUT_SEC=20
 ```
 
@@ -33,9 +33,12 @@ Note: the bot can only log events pushed by QQ platform after the bot is online 
 
 ## Group Image Archiving
 
-- Images in group message attachments are downloaded and saved under:
-  - `<GROUP_IMAGE_SAVE_DIR>/<YYYY-MM-DD>/<group_openid>/`
+- Images are saved by chat identity:
+  - Group chat: `<CHAT_IMAGE_SAVE_DIR>/group/<group_openid>/`
+  - Private chat: `<CHAT_IMAGE_SAVE_DIR>/private/<user_openid>/`
 - Audit log is written to:
   - `data/group_images.jsonl`
 - Quality strategy:
   - The bot downloads the attachment URL as-is (no compression/transcoding), preserving the best quality available from QQ attachment URL.
+- Backward compatibility:
+  - `GROUP_IMAGE_SAVE_DIR` is still supported as a fallback if `CHAT_IMAGE_SAVE_DIR` is not set.

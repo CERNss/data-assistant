@@ -1,14 +1,20 @@
 ## ADDED Requirements
 
-### Requirement: Save Group Images To Configured Directory
+### Requirement: Save Chat Images To Chat-Scoped Directory
 
-系统 MUST 在收到包含图片附件的群消息事件后，将图片文件保存到可配置目录。
+系统 MUST 在收到包含图片附件的聊天消息后，将图片文件保存到可配置目录，并按会话身份分目录。
 
 #### Scenario: Group message includes image attachment
 
 - **WHEN** 机器人在线并收到 `GroupAtMessageCreateEvent`，且附件 `content_type` 为图片类型
 - **THEN** 系统下载该图片并写入配置目录
-- **AND** 写入路径包含群标识与日期分层
+- **AND** 写入路径为 `.../group/<group_openid>/`
+
+#### Scenario: Private message includes image attachment
+
+- **WHEN** 机器人在线并收到 `C2CMessageCreateEvent`，且附件 `content_type` 为图片类型
+- **THEN** 系统下载该图片并写入配置目录
+- **AND** 写入路径为 `.../private/<user_openid>/`
 
 ### Requirement: Preserve Best Available Quality From Source URL
 
@@ -28,7 +34,7 @@
 
 - **WHEN** 图片下载并写盘成功
 - **THEN** 系统追加一条日志记录到图片日志文件
-- **AND** 记录包含 `group_openid`、`message_id`、`source_url`、`saved_path`、`size`
+- **AND** 记录包含 `chat_type`、`chat_id`、`message_id`、`source_url`、`saved_path`、`size`
 
 #### Scenario: Image download fails
 
