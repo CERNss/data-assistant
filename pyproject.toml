@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [tool.nonebot]
-plugin_dirs = []
+plugin_dirs = ["plugins"]
 builtin_plugins = []
 
 [tool.nonebot.adapters]
