@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,8 @@ IMAGE_SAVE_ROOT = Path(
     os.getenv("CHAT_IMAGE_SAVE_DIR", os.getenv("GROUP_IMAGE_SAVE_DIR", "data/chat_images"))
 )
 IMAGE_TIMEOUT_SEC = float(os.getenv("GROUP_IMAGE_TIMEOUT_SEC", "20"))
+IMAGE_RETRY_COUNT = int(os.getenv("GROUP_IMAGE_RETRY_COUNT", "3"))
+IMAGE_RETRY_DELAY_SEC = float(os.getenv("GROUP_IMAGE_RETRY_DELAY_SEC", "0.8"))
 
 
 def _append_json_line(path: Path, payload: dict[str, Any]) -> None:
@@ -72,6 +75,20 @@ async def _download_image_bytes(url: str) -> bytes:
             return await response.read()
 
 
+async def _download_image_bytes_with_retry(url: str) -> tuple[bytes, int]:
+    attempts = max(1, IMAGE_RETRY_COUNT)
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return await _download_image_bytes(url), attempt
+        except Exception as exc:
+            last_error = exc
+            if attempt < attempts:
+                await asyncio.sleep(IMAGE_RETRY_DELAY_SEC)
+    assert last_error is not None
+    raise RuntimeError(f"download failed after {attempts} attempts: {last_error}") from last_error
+
+
 async def _save_message_images(
     *,
     bot: Bot,
@@ -103,7 +120,7 @@ async def _save_message_images(
             "attachment": attachment.model_dump(mode="json"),
         }
         try:
-            raw_bytes = await _download_image_bytes(source_url)
+            raw_bytes, attempt_count = await _download_image_bytes_with_retry(source_url)
             ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
             original_name = _choose_filename(attachment.filename, idx, source_url)
             saved_name = f"{ts}_{message_id}_{idx}_{original_name}"
@@ -118,6 +135,7 @@ async def _save_message_images(
                     "status": "success",
                     "saved_path": str(save_path),
                     "size": len(raw_bytes),
+                    "attempt_count": attempt_count,
                 },
             )
             logger.info(
@@ -130,7 +148,12 @@ async def _save_message_images(
         except Exception as exc:
             _append_json_line(
                 IMAGE_LOG_FILE,
-                {**entry_base, "status": "failed", "error": str(exc)},
+                {
+                    **entry_base,
+                    "status": "failed",
+                    "error": str(exc),
+                    "attempt_count": max(1, IMAGE_RETRY_COUNT),
+                },
             )
             logger.warning(
                 "Failed to save chat image: chat_type={} chat_id={} url={} error={}",

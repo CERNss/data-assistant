@@ -20,6 +20,7 @@
 1. 在 `GroupAtMessageCreateEvent` 与 `C2CMessageCreateEvent` 处理器内遍历 `attachments`。
 2. 识别图片附件（`content_type` 以 `image/` 开头，或文件名后缀为常见图片格式）。
 3. 使用异步 HTTP 客户端下载附件 URL 二进制数据。
+   - 下载失败时按固定间隔进行有限次数重试。
 4. 保存路径规则：
    - 群聊：`<CHAT_IMAGE_SAVE_DIR>/group/<group_openid>/`
    - 私聊：`<CHAT_IMAGE_SAVE_DIR>/private/<user_openid>/`
@@ -31,6 +32,8 @@
 - `CHAT_IMAGE_SAVE_DIR`：图片保存根目录，默认 `data/chat_images`。
 - `GROUP_IMAGE_SAVE_DIR`：兼容旧变量名，若未配置 `CHAT_IMAGE_SAVE_DIR` 则使用它。
 - `GROUP_IMAGE_TIMEOUT_SEC`：下载超时秒数，默认 `20`。
+- `GROUP_IMAGE_RETRY_COUNT`：下载重试次数，默认 `3`。
+- `GROUP_IMAGE_RETRY_DELAY_SEC`：每次重试间隔秒数，默认 `0.8`。
 
 ## Risks
 

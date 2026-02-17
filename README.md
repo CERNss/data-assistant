@@ -27,6 +27,8 @@ PORT=8080
 QQ_BOTS=[{"id":"<appid>","token":"<token>","secret":"<secret>"}]
 CHAT_IMAGE_SAVE_DIR=data/chat_images
 GROUP_IMAGE_TIMEOUT_SEC=20
+GROUP_IMAGE_RETRY_COUNT=3
+GROUP_IMAGE_RETRY_DELAY_SEC=0.8
 ```
 
 Note: the bot can only log events pushed by QQ platform after the bot is online and has permissions. It cannot read chat history retroactively.
@@ -40,5 +42,7 @@ Note: the bot can only log events pushed by QQ platform after the bot is online 
   - `data/group_images.jsonl`
 - Quality strategy:
   - The bot downloads the attachment URL as-is (no compression/transcoding), preserving the best quality available from QQ attachment URL.
+- Retry strategy:
+  - On download failure, retry by `GROUP_IMAGE_RETRY_COUNT` with `GROUP_IMAGE_RETRY_DELAY_SEC` seconds delay between attempts.
 - Backward compatibility:
   - `GROUP_IMAGE_SAVE_DIR` is still supported as a fallback if `CHAT_IMAGE_SAVE_DIR` is not set.

@@ -41,3 +41,13 @@
 - **WHEN** 图片 URL 无法下载或写盘失败
 - **THEN** 系统追加失败日志
 - **AND** 记录包含失败原因与原始附件信息
+
+### Requirement: Retry Image Download On Transient Failure
+
+系统 MUST 在图片下载失败时进行有限次数重试，以降低临时网络抖动导致的失败率。
+
+#### Scenario: Retry before marking failed
+
+- **WHEN** 图片 URL 首次下载失败
+- **THEN** 系统按配置的重试次数和重试间隔继续尝试下载
+- **AND** 仅在所有重试都失败后记录最终失败日志
