@@ -18,6 +18,8 @@ from nonebot.adapters.qq.event import (
     GroupMsgReceiveEvent,
     GroupMsgRejectEvent,
 )
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 
 LOG_DIR = Path("data")
@@ -31,6 +33,7 @@ IMAGE_SAVE_ROOT = Path(
 IMAGE_TIMEOUT_SEC = float(os.getenv("GROUP_IMAGE_TIMEOUT_SEC", "20"))
 IMAGE_RETRY_COUNT = int(os.getenv("GROUP_IMAGE_RETRY_COUNT", "3"))
 IMAGE_RETRY_DELAY_SEC = float(os.getenv("GROUP_IMAGE_RETRY_DELAY_SEC", "0.8"))
+TRACER = trace.get_tracer("data_logger.plugins.group_logger")
 
 
 def _append_json_line(path: Path, payload: dict[str, Any]) -> None:
@@ -77,16 +80,26 @@ async def _download_image_bytes(url: str) -> bytes:
 
 async def _download_image_bytes_with_retry(url: str) -> tuple[bytes, int]:
     attempts = max(1, IMAGE_RETRY_COUNT)
-    last_error: Exception | None = None
-    for attempt in range(1, attempts + 1):
-        try:
-            return await _download_image_bytes(url), attempt
-        except Exception as exc:
-            last_error = exc
-            if attempt < attempts:
-                await asyncio.sleep(IMAGE_RETRY_DELAY_SEC)
-    assert last_error is not None
-    raise RuntimeError(f"download failed after {attempts} attempts: {last_error}") from last_error
+    with TRACER.start_as_current_span(
+        "chat_image.download",
+        attributes={
+            "chat.image.url": url,
+            "chat.image.max_attempts": attempts,
+        },
+    ) as span:
+        last_error: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            span.add_event("chat_image.download.attempt", {"attempt": attempt})
+            try:
+                return await _download_image_bytes(url), attempt
+            except Exception as exc:
+                last_error = exc
+                if attempt < attempts:
+                    await asyncio.sleep(IMAGE_RETRY_DELAY_SEC)
+        assert last_error is not None
+        span.record_exception(last_error)
+        span.set_status(Status(status_code=StatusCode.ERROR, description=str(last_error)))
+        raise RuntimeError(f"download failed after {attempts} attempts: {last_error}") from last_error
 
 
 async def _save_message_images(
@@ -99,69 +112,78 @@ async def _save_message_images(
     user_id: str,
     attachments: list[Any] | None,
 ) -> None:
-    image_dir = IMAGE_SAVE_ROOT / chat_type / chat_id
-    for idx, attachment in enumerate(attachments or []):
-        source_url = attachment.url
-        if not source_url or not _is_image_attachment(
-            attachment.content_type, attachment.filename, source_url
-        ):
-            continue
+    with TRACER.start_as_current_span(
+        "chat_image.save_batch",
+        attributes={
+            "chat.type": chat_type,
+            "chat.id": chat_id,
+            "chat.message_id": message_id,
+            "chat.attachments_count": len(attachments or []),
+        },
+    ):
+        image_dir = IMAGE_SAVE_ROOT / chat_type / chat_id
+        for idx, attachment in enumerate(attachments or []):
+            source_url = attachment.url
+            if not source_url or not _is_image_attachment(
+                attachment.content_type, attachment.filename, source_url
+            ):
+                continue
 
-        entry_base = {
-            "logged_at": datetime.now(UTC).isoformat(),
-            "self_id": bot.self_id,
-            "event_name": event_name,
-            "chat_type": chat_type,
-            "chat_id": chat_id,
-            "user_id": user_id,
-            "message_id": message_id,
-            "attachment_index": idx,
-            "source_url": source_url,
-            "attachment": attachment.model_dump(mode="json"),
-        }
-        try:
-            raw_bytes, attempt_count = await _download_image_bytes_with_retry(source_url)
-            ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-            original_name = _choose_filename(attachment.filename, idx, source_url)
-            saved_name = f"{ts}_{message_id}_{idx}_{original_name}"
-            save_path = image_dir / saved_name
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            save_path.write_bytes(raw_bytes)
+            entry_base = {
+                "logged_at": datetime.now(UTC).isoformat(),
+                "self_id": bot.self_id,
+                "event_name": event_name,
+                "chat_type": chat_type,
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "message_id": message_id,
+                "attachment_index": idx,
+                "source_url": source_url,
+                "attachment": attachment.model_dump(mode="json"),
+            }
+            try:
+                raw_bytes, attempt_count = await _download_image_bytes_with_retry(source_url)
+                ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+                original_name = _choose_filename(attachment.filename, idx, source_url)
+                saved_name = f"{ts}_{message_id}_{idx}_{original_name}"
+                save_path = image_dir / saved_name
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                save_path.write_bytes(raw_bytes)
 
-            _append_json_line(
-                IMAGE_LOG_FILE,
-                {
-                    **entry_base,
-                    "status": "success",
-                    "saved_path": str(save_path),
-                    "size": len(raw_bytes),
-                    "attempt_count": attempt_count,
-                },
-            )
-            logger.info(
-                "Saved chat image: chat_type={} chat_id={} path={} size={}",
-                chat_type,
-                chat_id,
-                save_path,
-                len(raw_bytes),
-            )
-        except Exception as exc:
-            _append_json_line(
-                IMAGE_LOG_FILE,
-                {
-                    **entry_base,
-                    "status": "failed",
-                    "error": str(exc),
-                    "attempt_count": max(1, IMAGE_RETRY_COUNT),
-                },
-            )
-            logger.warning(
-                "Failed to save chat image: chat_type={} chat_id={} url={} error={}",
-                chat_type,
-                chat_id,
-                source_url,
-                exc,
-            )
+                _append_json_line(
+                    IMAGE_LOG_FILE,
+                    {
+                        **entry_base,
+                        "status": "success",
+                        "saved_path": str(save_path),
+                        "size": len(raw_bytes),
+                        "attempt_count": attempt_count,
+                    },
+                )
+                logger.info(
+                    "Saved chat image: chat_type={} chat_id={} path={} size={}",
+                    chat_type,
+                    chat_id,
+                    save_path,
+                    len(raw_bytes),
+                )
+            except Exception as exc:
+                _append_json_line(
+                    IMAGE_LOG_FILE,
+                    {
+                        **entry_base,
+                        "status": "failed",
+                        "error": str(exc),
+                        "attempt_count": max(1, IMAGE_RETRY_COUNT),
+                    },
+                )
+                logger.warning(
+                    "Failed to save chat image: chat_type={} chat_id={} url={} error={}",
+                    chat_type,
+                    chat_id,
+                    source_url,
+                    exc,
+                )
 
 
 group_message_logger = on_type(GroupAtMessageCreateEvent, priority=1, block=False)
@@ -172,48 +194,66 @@ group_reject_notice_logger = on_type(GroupMsgRejectEvent, priority=1, block=Fals
 
 @group_message_logger.handle()
 async def handle_group_message(bot: Bot, event: GroupAtMessageCreateEvent) -> None:
-    payload = {
-        "logged_at": datetime.now(UTC).isoformat(),
-        "self_id": bot.self_id,
-        "event_name": event.get_event_name(),
-        "event_description": event.get_event_description(),
-        "group_openid": event.group_openid,
-        "user_id": event.get_user_id(),
-        "message_id": event.id,
-        "plain_text": event.get_plaintext(),
-        "message": str(event.get_message()),
-        "raw_event": event.model_dump(mode="json"),
-    }
-    _append_json_line(MESSAGE_LOG_FILE, payload)
-    logger.info(
-        "Logged group message: group_openid={} user_id={} message_id={}",
-        event.group_openid,
-        event.get_user_id(),
-        event.id,
-    )
+    with TRACER.start_as_current_span(
+        "qq.group_message.handle",
+        attributes={
+            "chat.type": "group",
+            "chat.id": event.group_openid,
+            "chat.message_id": event.id,
+            "chat.user_id": event.get_user_id(),
+        },
+    ):
+        payload = {
+            "logged_at": datetime.now(UTC).isoformat(),
+            "self_id": bot.self_id,
+            "event_name": event.get_event_name(),
+            "event_description": event.get_event_description(),
+            "group_openid": event.group_openid,
+            "user_id": event.get_user_id(),
+            "message_id": event.id,
+            "plain_text": event.get_plaintext(),
+            "message": str(event.get_message()),
+            "raw_event": event.model_dump(mode="json"),
+        }
+        _append_json_line(MESSAGE_LOG_FILE, payload)
+        logger.info(
+            "Logged group message: group_openid={} user_id={} message_id={}",
+            event.group_openid,
+            event.get_user_id(),
+            event.id,
+        )
 
-    await _save_message_images(
-        bot=bot,
-        event_name=event.get_event_name(),
-        chat_type="group",
-        chat_id=event.group_openid,
-        message_id=event.id,
-        user_id=event.get_user_id(),
-        attachments=event.attachments,
-    )
+        await _save_message_images(
+            bot=bot,
+            event_name=event.get_event_name(),
+            chat_type="group",
+            chat_id=event.group_openid,
+            message_id=event.id,
+            user_id=event.get_user_id(),
+            attachments=event.attachments,
+        )
 
 
 @c2c_message_logger.handle()
 async def handle_c2c_message(bot: Bot, event: C2CMessageCreateEvent) -> None:
-    await _save_message_images(
-        bot=bot,
-        event_name=event.get_event_name(),
-        chat_type="private",
-        chat_id=event.get_user_id(),
-        message_id=event.id,
-        user_id=event.get_user_id(),
-        attachments=event.attachments,
-    )
+    with TRACER.start_as_current_span(
+        "qq.private_message.handle",
+        attributes={
+            "chat.type": "private",
+            "chat.id": event.get_user_id(),
+            "chat.message_id": event.id,
+            "chat.user_id": event.get_user_id(),
+        },
+    ):
+        await _save_message_images(
+            bot=bot,
+            event_name=event.get_event_name(),
+            chat_type="private",
+            chat_id=event.get_user_id(),
+            message_id=event.id,
+            user_id=event.get_user_id(),
+            attachments=event.attachments,
+        )
 
 
 @group_receive_notice_logger.handle()

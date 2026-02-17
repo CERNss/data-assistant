@@ -1,7 +1,10 @@
 import nonebot
 from nonebot.adapters.qq import Adapter as QQAdapter
 
+from telemetry import init_telemetry, install_error_hooks
 
+init_telemetry()
+install_error_hooks()
 nonebot.init()
 driver = nonebot.get_driver()
 driver.register_adapter(QQAdapter)
