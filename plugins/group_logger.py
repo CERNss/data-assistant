@@ -19,7 +19,7 @@ from .chat_image import save_message_images
 LOG_DIR = Path("data")
 MESSAGE_LOG_FILE = LOG_DIR / "group_messages.jsonl"
 NOTICE_LOG_FILE = LOG_DIR / "group_notices.jsonl"
-TRACER = trace.get_tracer("data_logger.plugins.group_logger")
+TRACER = trace.get_tracer("data_assistant.plugins.group_logger")
 
 
 group_message_logger = on_type(GroupAtMessageCreateEvent, priority=1, block=False)

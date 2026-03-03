@@ -16,7 +16,7 @@ from .audit import append_json_line
 from .config import ChatImageConfig
 
 
-TRACER = trace.get_tracer("data_logger.plugins.chat_image.tagger_pipeline")
+TRACER = trace.get_tracer("data_assistant.plugins.chat_image.tagger_pipeline")
 QUEUE_LOCK = asyncio.Lock()
 AUTO_RUN_LOCK = asyncio.Lock()
 AUTO_RUN_TASK: asyncio.Task[None] | None = None

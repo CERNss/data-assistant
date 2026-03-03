@@ -1,7 +1,7 @@
 [project]
-name = "data-logger"
+name = "data-assistant"
 version = "0.1.0"
-description = "data-logger"
+description = "data-assistant"
 readme = "README.md"
 requires-python = ">=3.10, <4.0"
 dependencies = [
@@ -12,6 +12,10 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.30.0",
     "nats-py>=2.9.0",
 ]
+
+[project.scripts]
+data-assistant-logger = "bot:main"
+data-assistant-processor = "plugins.chat_image.tagger_worker:main"
 
 [tool.nonebot]
 plugin_dirs = ["plugins"]

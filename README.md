@@ -1,10 +1,12 @@
-# data-logger
+# data-assistant
 
 ## How to start
 
 1. generate project using `nb create` .
 2. install plugins using `nb plugin install` .
-3. run your bot using `nb run` .
+3. run services:
+   - collector (`data-logger`): `python data_logger_service.py`
+   - processor (`data-processor`): `python data_processor_service.py`
 
 ## Documentation
 
@@ -30,7 +32,7 @@ GROUP_IMAGE_TIMEOUT_SEC=20
 GROUP_IMAGE_RETRY_COUNT=3
 GROUP_IMAGE_RETRY_DELAY_SEC=0.8
 OTEL_ENABLED=true
-OTEL_SERVICE_NAME=data-logger
+OTEL_SERVICE_NAME=data-assistant-logger
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317
 OTEL_EXPORTER_OTLP_INSECURE=true
 # Optional: key1=value1,key2=value2
@@ -77,7 +79,7 @@ CHAT_IMAGE_NATS_ENABLED=true
 CHAT_IMAGE_NATS_SERVERS=nats://127.0.0.1:4222
 CHAT_IMAGE_NATS_SUBJECT=chat.image.tagger.task
 CHAT_IMAGE_NATS_QUEUE_GROUP=chat-image-tagger-workers
-CHAT_IMAGE_NATS_CLIENT_NAME=data-logger
+CHAT_IMAGE_NATS_CLIENT_NAME=data-assistant
 CHAT_IMAGE_NATS_CONNECT_TIMEOUT_SEC=5
 CHAT_IMAGE_NATS_PUBLISH_TIMEOUT_SEC=3
 CHAT_IMAGE_NATS_FALLBACK_LOCAL_QUEUE=true
@@ -107,16 +109,16 @@ Start NATS first (example):
 nats-server -js
 ```
 
-Start collector service:
+Start collector service (`data-logger`):
 
 ```bash
-nb run
+python data_logger_service.py
 ```
 
-Start tagger worker service:
+Start processor service (`data-processor`):
 
 ```bash
-python -m plugins.chat_image.tagger_worker
+python data_processor_service.py
 ```
 
 ### Manual/local fallback modes

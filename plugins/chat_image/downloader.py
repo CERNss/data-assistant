@@ -9,7 +9,7 @@ from opentelemetry.trace import Status, StatusCode
 from .config import ChatImageConfig
 
 
-TRACER = trace.get_tracer("data_logger.plugins.chat_image.downloader")
+TRACER = trace.get_tracer("data_assistant.plugins.chat_image.downloader")
 
 
 async def download_image_bytes_with_retry(url: str, config: ChatImageConfig) -> tuple[bytes, int]:

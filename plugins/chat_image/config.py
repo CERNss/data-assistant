@@ -103,8 +103,8 @@ def load_chat_image_config() -> ChatImageConfig:
             or "chat.image.tagger.task",
             queue_group=os.getenv("CHAT_IMAGE_NATS_QUEUE_GROUP", "chat-image-tagger-workers").strip()
             or "chat-image-tagger-workers",
-            client_name=os.getenv("CHAT_IMAGE_NATS_CLIENT_NAME", "data-logger").strip()
-            or "data-logger",
+            client_name=os.getenv("CHAT_IMAGE_NATS_CLIENT_NAME", "data-assistant").strip()
+            or "data-assistant",
             connect_timeout_sec=_env_float("CHAT_IMAGE_NATS_CONNECT_TIMEOUT_SEC", 5.0, minimum=0.1),
             publish_timeout_sec=_env_float("CHAT_IMAGE_NATS_PUBLISH_TIMEOUT_SEC", 3.0, minimum=0.1),
             fallback_to_local_queue=_env_bool("CHAT_IMAGE_NATS_FALLBACK_LOCAL_QUEUE", True),

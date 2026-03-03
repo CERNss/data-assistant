@@ -59,7 +59,7 @@ def init_telemetry() -> None:
     endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4317")
     insecure = _env_bool("OTEL_EXPORTER_OTLP_INSECURE", True)
     headers = _parse_headers(os.getenv("OTEL_EXPORTER_OTLP_HEADERS"))
-    service_name = os.getenv("OTEL_SERVICE_NAME", "data-logger")
+    service_name = os.getenv("OTEL_SERVICE_NAME", "data-assistant-logger")
     resource = Resource.create({"service.name": service_name})
 
     span_exporter = OTLPSpanExporter(endpoint=endpoint, insecure=insecure, headers=headers)

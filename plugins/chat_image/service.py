@@ -15,7 +15,7 @@ from .storage import build_image_save_path, is_image_attachment
 from .tagger_pipeline import enqueue_image_for_tagging, enqueue_tagger_task_payload
 
 
-TRACER = trace.get_tracer("data_logger.plugins.chat_image.service")
+TRACER = trace.get_tracer("data_assistant.plugins.chat_image.service")
 
 
 async def save_message_images(

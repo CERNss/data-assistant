@@ -51,7 +51,7 @@ class TestChatImageConfig(unittest.TestCase):
         self.assertEqual(cfg.nats.servers, ("nats://127.0.0.1:4222",))
         self.assertEqual(cfg.nats.subject, "chat.image.tagger.task")
         self.assertEqual(cfg.nats.queue_group, "chat-image-tagger-workers")
-        self.assertEqual(cfg.nats.client_name, "data-logger")
+        self.assertEqual(cfg.nats.client_name, "data-assistant")
         self.assertEqual(cfg.nats.connect_timeout_sec, 5.0)
         self.assertEqual(cfg.nats.publish_timeout_sec, 3.0)
         self.assertTrue(cfg.nats.fallback_to_local_queue)
