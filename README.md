@@ -53,6 +53,51 @@ Note: the bot can only log events pushed by QQ platform after the bot is online 
 - Backward compatibility:
   - `GROUP_IMAGE_SAVE_DIR` is still supported as a fallback if `CHAT_IMAGE_SAVE_DIR` is not set.
 
+## Collect Then Tag (Eagle_AItagger_byWD1.4)
+
+- Integration target: [Ir-Phen/Eagle_AItagger_byWD1.4](https://github.com/Ir-Phen/Eagle_AItagger_byWD1.4)
+- Pipeline:
+  - Step 1: bot collects and stores original images
+  - Step 2: image paths are queued into `data/chat_image_tagger_queue.json`
+  - Step 3: run tagger queue processor (manual or auto)
+- Tagging audit log:
+  - `data/group_image_tags.jsonl`
+
+### Required env vars for tagging
+
+```env
+CHAT_IMAGE_TAGGER_ENABLED=true
+CHAT_IMAGE_TAGGER_TOOL_ROOT=/absolute/path/to/Eagle_AItagger_byWD1.4
+```
+
+### Optional env vars
+
+```env
+CHAT_IMAGE_TAGGER_AUTO_RUN=false
+CHAT_IMAGE_TAGGER_PYTHON=python
+CHAT_IMAGE_TAGGER_ENTRY_SCRIPT=main.py
+CHAT_IMAGE_TAGGER_CONFIG=config.ini
+CHAT_IMAGE_TAGGER_BATCH_SIZE=16
+CHAT_IMAGE_TAGGER_TIMEOUT_SEC=3600
+CHAT_IMAGE_TAGGER_MAX_ATTEMPTS=3
+CHAT_IMAGE_TAGGER_QUEUE_FILE=data/chat_image_tagger_queue.json
+CHAT_IMAGE_TAGGER_RUN_ROOT=data/chat_image_tagger_runs
+CHAT_IMAGE_TAGGER_AUDIT_LOG_FILE=data/group_image_tags.jsonl
+CHAT_IMAGE_TAGGER_KEEP_RUN_ARTIFACTS=false
+```
+
+### Run tagging manually
+
+```bash
+python -m plugins.chat_image.tagger_cli
+```
+
+Only process one batch:
+
+```bash
+python -m plugins.chat_image.tagger_cli --once
+```
+
 ## OTel + Signoz
 
 - Enable OTel by setting `OTEL_ENABLED=true`.

@@ -11,6 +11,7 @@ from .audit import append_json_line
 from .config import load_chat_image_config
 from .downloader import download_image_bytes_with_retry
 from .storage import build_image_save_path, is_image_attachment
+from .tagger_pipeline import enqueue_image_for_tagging
 
 
 TRACER = trace.get_tracer("data_logger.plugins.chat_image.service")
@@ -85,6 +86,19 @@ async def save_message_images(
                     chat_id,
                     save_path,
                     len(raw_bytes),
+                )
+                await enqueue_image_for_tagging(
+                    config=config,
+                    image_path=save_path,
+                    context={
+                        "event_name": event_name,
+                        "chat_type": chat_type,
+                        "chat_id": chat_id,
+                        "user_id": user_id,
+                        "message_id": message_id,
+                        "attachment_index": idx,
+                        "source_url": source_url,
+                    },
                 )
             except Exception as exc:
                 append_json_line(
