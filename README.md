@@ -57,20 +57,33 @@ Note: the bot can only log events pushed by QQ platform after the bot is online 
 
 - Integration target: [Ir-Phen/Eagle_AItagger_byWD1.4](https://github.com/Ir-Phen/Eagle_AItagger_byWD1.4)
 - Pipeline:
-  - Step 1: bot collects and stores original images
-  - Step 2: image paths are queued into `data/chat_image_tagger_queue.json`
-  - Step 3: run tagger queue processor (manual or auto)
+  - Step 1: collector service (`bot.py`) collects and stores original images
+  - Step 2: collector publishes tagging task to NATS
+  - Step 3: tagger worker service subscribes NATS and executes tagging pipeline
 - Tagging audit log:
   - `data/group_image_tags.jsonl`
 
-### Required env vars for tagging
+### Required env vars for tagger
 
 ```env
 CHAT_IMAGE_TAGGER_ENABLED=true
 CHAT_IMAGE_TAGGER_TOOL_ROOT=/absolute/path/to/Eagle_AItagger_byWD1.4
 ```
 
-### Optional env vars
+### NATS env vars
+
+```env
+CHAT_IMAGE_NATS_ENABLED=true
+CHAT_IMAGE_NATS_SERVERS=nats://127.0.0.1:4222
+CHAT_IMAGE_NATS_SUBJECT=chat.image.tagger.task
+CHAT_IMAGE_NATS_QUEUE_GROUP=chat-image-tagger-workers
+CHAT_IMAGE_NATS_CLIENT_NAME=data-logger
+CHAT_IMAGE_NATS_CONNECT_TIMEOUT_SEC=5
+CHAT_IMAGE_NATS_PUBLISH_TIMEOUT_SEC=3
+CHAT_IMAGE_NATS_FALLBACK_LOCAL_QUEUE=true
+```
+
+### Tagger optional env vars
 
 ```env
 CHAT_IMAGE_TAGGER_AUTO_RUN=false
@@ -86,7 +99,27 @@ CHAT_IMAGE_TAGGER_AUDIT_LOG_FILE=data/group_image_tags.jsonl
 CHAT_IMAGE_TAGGER_KEEP_RUN_ARTIFACTS=false
 ```
 
-### Run tagging manually
+### Run as two microservices
+
+Start NATS first (example):
+
+```bash
+nats-server -js
+```
+
+Start collector service:
+
+```bash
+nb run
+```
+
+Start tagger worker service:
+
+```bash
+python -m plugins.chat_image.tagger_worker
+```
+
+### Manual/local fallback modes
 
 ```bash
 python -m plugins.chat_image.tagger_cli

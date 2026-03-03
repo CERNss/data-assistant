@@ -10,8 +10,9 @@ from opentelemetry import trace
 from .audit import append_json_line
 from .config import load_chat_image_config
 from .downloader import download_image_bytes_with_retry
+from .nats_task_bus import publish_tagger_task
 from .storage import build_image_save_path, is_image_attachment
-from .tagger_pipeline import enqueue_image_for_tagging
+from .tagger_pipeline import enqueue_image_for_tagging, enqueue_tagger_task_payload
 
 
 TRACER = trace.get_tracer("data_logger.plugins.chat_image.service")
@@ -87,19 +88,36 @@ async def save_message_images(
                     save_path,
                     len(raw_bytes),
                 )
-                await enqueue_image_for_tagging(
-                    config=config,
+                tag_context = {
+                    "event_name": event_name,
+                    "chat_type": chat_type,
+                    "chat_id": chat_id,
+                    "user_id": user_id,
+                    "message_id": message_id,
+                    "attachment_index": idx,
+                    "source_url": source_url,
+                }
+
+                published = await publish_tagger_task(
+                    config,
                     image_path=save_path,
-                    context={
-                        "event_name": event_name,
-                        "chat_type": chat_type,
-                        "chat_id": chat_id,
-                        "user_id": user_id,
-                        "message_id": message_id,
-                        "attachment_index": idx,
-                        "source_url": source_url,
-                    },
+                    context=tag_context,
                 )
+                if not published:
+                    if config.nats.enabled and config.nats.fallback_to_local_queue:
+                        await enqueue_tagger_task_payload(
+                            config=config,
+                            payload={
+                                "image_path": str(save_path),
+                                "context": tag_context,
+                            },
+                        )
+                    elif not config.nats.enabled:
+                        await enqueue_image_for_tagging(
+                            config=config,
+                            image_path=save_path,
+                            context=tag_context,
+                        )
             except Exception as exc:
                 append_json_line(
                     config.audit_log_file,

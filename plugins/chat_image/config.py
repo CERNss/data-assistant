@@ -61,18 +61,33 @@ class TaggerPipelineConfig:
 
 
 @dataclass(frozen=True)
+class NatsTaskBusConfig:
+    enabled: bool
+    servers: tuple[str, ...]
+    subject: str
+    queue_group: str
+    client_name: str
+    connect_timeout_sec: float
+    publish_timeout_sec: float
+    fallback_to_local_queue: bool
+
+
+@dataclass(frozen=True)
 class ChatImageConfig:
     save_root: Path
     timeout_sec: float
     retry_count: int
     retry_delay_sec: float
     audit_log_file: Path
+    nats: NatsTaskBusConfig
     tagger: TaggerPipelineConfig
 
 
 def load_chat_image_config() -> ChatImageConfig:
     tagger_tool_root = os.getenv("CHAT_IMAGE_TAGGER_TOOL_ROOT", "").strip()
     tagger_config = os.getenv("CHAT_IMAGE_TAGGER_CONFIG", "config.ini").strip()
+    raw_nats_servers = os.getenv("CHAT_IMAGE_NATS_SERVERS", "nats://127.0.0.1:4222")
+    nats_servers = tuple(v.strip() for v in raw_nats_servers.split(",") if v.strip())
     return ChatImageConfig(
         save_root=Path(
             os.getenv("CHAT_IMAGE_SAVE_DIR", os.getenv("GROUP_IMAGE_SAVE_DIR", "data/chat_images"))
@@ -81,6 +96,19 @@ def load_chat_image_config() -> ChatImageConfig:
         retry_count=_env_int("GROUP_IMAGE_RETRY_COUNT", 3, minimum=1),
         retry_delay_sec=_env_float("GROUP_IMAGE_RETRY_DELAY_SEC", 0.8, minimum=0.0),
         audit_log_file=Path("data/group_images.jsonl"),
+        nats=NatsTaskBusConfig(
+            enabled=_env_bool("CHAT_IMAGE_NATS_ENABLED", False),
+            servers=nats_servers or ("nats://127.0.0.1:4222",),
+            subject=os.getenv("CHAT_IMAGE_NATS_SUBJECT", "chat.image.tagger.task").strip()
+            or "chat.image.tagger.task",
+            queue_group=os.getenv("CHAT_IMAGE_NATS_QUEUE_GROUP", "chat-image-tagger-workers").strip()
+            or "chat-image-tagger-workers",
+            client_name=os.getenv("CHAT_IMAGE_NATS_CLIENT_NAME", "data-logger").strip()
+            or "data-logger",
+            connect_timeout_sec=_env_float("CHAT_IMAGE_NATS_CONNECT_TIMEOUT_SEC", 5.0, minimum=0.1),
+            publish_timeout_sec=_env_float("CHAT_IMAGE_NATS_PUBLISH_TIMEOUT_SEC", 3.0, minimum=0.1),
+            fallback_to_local_queue=_env_bool("CHAT_IMAGE_NATS_FALLBACK_LOCAL_QUEUE", True),
+        ),
         tagger=TaggerPipelineConfig(
             enabled=_env_bool("CHAT_IMAGE_TAGGER_ENABLED", False),
             auto_run=_env_bool("CHAT_IMAGE_TAGGER_AUTO_RUN", False),

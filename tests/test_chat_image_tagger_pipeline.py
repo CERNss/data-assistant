@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from plugins.chat_image.config import ChatImageConfig, TaggerPipelineConfig
+from plugins.chat_image.config import ChatImageConfig, NatsTaskBusConfig, TaggerPipelineConfig
 from plugins.chat_image.tagger_pipeline import (
     enqueue_image_for_tagging,
     get_pending_tagger_count,
@@ -21,6 +21,16 @@ class TestChatImageTaggerPipeline(unittest.IsolatedAsyncioTestCase):
             retry_count=3,
             retry_delay_sec=0.8,
             audit_log_file=root / "group_images.jsonl",
+            nats=NatsTaskBusConfig(
+                enabled=False,
+                servers=("nats://127.0.0.1:4222",),
+                subject="chat.image.tagger.task",
+                queue_group="chat-image-tagger-workers",
+                client_name="test",
+                connect_timeout_sec=3.0,
+                publish_timeout_sec=2.0,
+                fallback_to_local_queue=True,
+            ),
             tagger=TaggerPipelineConfig(
                 enabled=True,
                 auto_run=False,

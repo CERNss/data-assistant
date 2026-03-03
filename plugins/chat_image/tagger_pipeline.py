@@ -221,7 +221,28 @@ async def enqueue_image_for_tagging(
         logger.warning("Tagger is enabled but CHAT_IMAGE_TAGGER_TOOL_ROOT is not configured")
         return
 
-    queued_image_path = str(image_path.resolve())
+    await enqueue_tagger_task_payload(
+        config=config,
+        payload={
+            "image_path": str(image_path.resolve()),
+            "context": context,
+        },
+    )
+
+
+async def enqueue_tagger_task_payload(
+    *,
+    config: ChatImageConfig,
+    payload: dict[str, Any],
+) -> None:
+    tagger = config.tagger
+
+    queued_image_path_raw = payload.get("image_path")
+    if not isinstance(queued_image_path_raw, str) or not queued_image_path_raw.strip():
+        return
+    queued_image_path = str(Path(queued_image_path_raw.strip()).resolve())
+    context_raw = payload.get("context", {})
+    context = context_raw if isinstance(context_raw, dict) else {}
     queue_item = {
         "image_path": queued_image_path,
         "context": context,
