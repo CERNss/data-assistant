@@ -17,7 +17,8 @@
 **Non-Goals:**
 - 不在本变更中引入复杂分布式调度（如 Celery/Kafka）。
 - 不改造外部打标工具内部实现。
-- 不实现跨服务事务一致性，仅保证至少一次投递语义下的幂等处理。
+- 不实现跨服务事务一致性。
+- 不在本变更中实现持久化消息投递语义（当前为 core NATS at-most-once）。
 
 ## Decisions
 
@@ -44,8 +45,11 @@
 - [NATS 不可用] 采集侧任务投递失败  
   → Mitigation: 记录错误日志并可配置回退到本地队列。
 
-- [重复消息] 至少一次投递模型下可能重复消费  
+- [重复消息] 上层重试或重复发布时可能重复消费  
   → Mitigation: 保持基于 `image_path` 的队列去重逻辑。
+
+- [消息丢失] core NATS 在无订阅者或网络异常窗口下可能丢失消息  
+  → Mitigation: 运维上先启动 worker 后启动 collector；后续可升级到 JetStream durable consumer。
 
 - [消费者崩溃] 消费中断导致积压  
   → Mitigation: 使用 queue group + 持续运行 worker，并保留本地队列重试。

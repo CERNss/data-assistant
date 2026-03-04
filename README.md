@@ -109,17 +109,19 @@ Start NATS first (example):
 nats-server -js
 ```
 
-Start collector service (`data-logger`):
+Start processor service (`data-processor`) first:
+
+```bash
+python data_processor_service.py
+```
+
+Then start collector service (`data-logger`):
 
 ```bash
 python data_logger_service.py
 ```
 
-Start processor service (`data-processor`):
-
-```bash
-python data_processor_service.py
-```
+Note: current implementation uses core NATS pub/sub semantics. If no worker is subscribed, published tasks can be lost. For stronger delivery guarantees, use persistent messaging (for example, NATS JetStream durable consumers).
 
 ### Manual/local fallback modes
 

@@ -6,7 +6,7 @@ from typing import Any
 
 from nonebot import logger
 
-from .config import load_chat_image_config
+from .config import ChatImageConfig, load_chat_image_config
 from .nats_task_bus import decode_tagger_task_payload
 from .tagger_pipeline import (
     enqueue_tagger_task_payload,
@@ -14,6 +14,23 @@ from .tagger_pipeline import (
     run_tagger_once,
     run_tagger_until_empty,
 )
+
+
+async def handle_nats_message(*, config: ChatImageConfig, data: bytes, subject: str) -> None:
+    try:
+        payload = decode_tagger_task_payload(data)
+    except Exception as exc:
+        logger.warning("Ignore invalid NATS payload on {}: {}", subject, exc)
+        return
+
+    try:
+        await enqueue_tagger_task_payload(config=config, payload=payload)
+        if config.tagger.auto_run:
+            await ensure_tagger_auto_run(config)
+        else:
+            await run_tagger_once(config)
+    except Exception as exc:
+        logger.warning("Failed to process NATS payload on {}: {}", subject, exc)
 
 
 async def _run(process_backlog: bool) -> int:
@@ -34,17 +51,6 @@ async def _run(process_backlog: bool) -> int:
         print(f"nats-py is required for worker mode: {exc}")
         return 1
 
-    if process_backlog:
-        backlog_summary = await run_tagger_until_empty(config)
-        if backlog_summary["picked"] > 0:
-            logger.info(
-                "Processed local backlog before subscribe: picked={} success={} failed={} requeued={}",
-                backlog_summary["picked"],
-                backlog_summary["success"],
-                backlog_summary["failed"],
-                backlog_summary["requeued"],
-            )
-
     nc = await nats.connect(
         servers=list(config.nats.servers),
         name=f"{config.nats.client_name}-worker",
@@ -52,17 +58,7 @@ async def _run(process_backlog: bool) -> int:
     )
 
     async def _on_message(msg: Any) -> None:
-        try:
-            payload = decode_tagger_task_payload(msg.data)
-        except Exception as exc:
-            logger.warning("Ignore invalid NATS payload on {}: {}", msg.subject, exc)
-            return
-
-        await enqueue_tagger_task_payload(config=config, payload=payload)
-        if config.tagger.auto_run:
-            await ensure_tagger_auto_run(config)
-        else:
-            await run_tagger_once(config)
+        await handle_nats_message(config=config, data=msg.data, subject=msg.subject)
 
     await nc.subscribe(
         config.nats.subject,
@@ -75,6 +71,17 @@ async def _run(process_backlog: bool) -> int:
         config.nats.subject,
         config.nats.queue_group,
     )
+
+    if process_backlog:
+        backlog_summary = await run_tagger_until_empty(config)
+        if backlog_summary["picked"] > 0:
+            logger.info(
+                "Processed local backlog after subscribe: picked={} success={} failed={} requeued={}",
+                backlog_summary["picked"],
+                backlog_summary["success"],
+                backlog_summary["failed"],
+                backlog_summary["requeued"],
+            )
 
     stop_event = asyncio.Event()
     try:
