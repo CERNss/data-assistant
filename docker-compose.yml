@@ -1,0 +1,70 @@
+services:
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats-data:/data
+    restart: unless-stopped
+    networks:
+      - data-assistant-net
+
+  processor:
+    build:
+      context: .
+      dockerfile: Dockerfile.processor
+    env_file:
+      - .env
+    environment:
+      CHAT_IMAGE_NATS_ENABLED: "true"
+      CHAT_IMAGE_NATS_SERVERS: "nats://nats:4222"
+      CHAT_IMAGE_TAGGER_ENABLED: "true"
+      CHAT_IMAGE_TAGGER_TOOL_ROOT: "/opt/tagger"
+      CHAT_IMAGE_SAVE_DIR: "/app/data/chat_images"
+      GROUP_IMAGE_SAVE_DIR: "/app/data/chat_images"
+      CHAT_IMAGE_TAGGER_QUEUE_FILE: "/app/data/chat_image_tagger_queue.json"
+      CHAT_IMAGE_TAGGER_RUN_ROOT: "/app/data/chat_image_tagger_runs"
+      CHAT_IMAGE_TAGGER_AUDIT_LOG_FILE: "/app/data/group_image_tags.jsonl"
+      OTEL_SERVICE_NAME: "data-assistant-processor"
+    volumes:
+      - chat-data:/app/data
+      - ${CHAT_IMAGE_TAGGER_TOOL_ROOT_HOST:?set CHAT_IMAGE_TAGGER_TOOL_ROOT_HOST in .env}:/opt/tagger:ro
+    depends_on:
+      - nats
+    restart: unless-stopped
+    networks:
+      - data-assistant-net
+
+  logger:
+    build:
+      context: .
+      dockerfile: Dockerfile.logger
+    env_file:
+      - .env
+    environment:
+      CHAT_IMAGE_NATS_ENABLED: "true"
+      CHAT_IMAGE_NATS_SERVERS: "nats://nats:4222"
+      CHAT_IMAGE_TAGGER_ENABLED: "false"
+      CHAT_IMAGE_SAVE_DIR: "/app/data/chat_images"
+      GROUP_IMAGE_SAVE_DIR: "/app/data/chat_images"
+      OTEL_SERVICE_NAME: "data-assistant-logger"
+    ports:
+      - "8080:8080"
+    volumes:
+      - chat-data:/app/data
+    depends_on:
+      - nats
+      - processor
+    restart: unless-stopped
+    networks:
+      - data-assistant-net
+
+volumes:
+  chat-data:
+  nats-data:
+
+networks:
+  data-assistant-net:
+    driver: bridge

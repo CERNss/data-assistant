@@ -123,6 +123,61 @@ python data_logger_service.py
 
 Note: current implementation uses core NATS pub/sub semantics. If no worker is subscribed, published tasks can be lost. For stronger delivery guarantees, use persistent messaging (for example, NATS JetStream durable consumers).
 
+### Run with Docker Compose (logger image + processor image + official NATS image)
+
+Container topology:
+- `logger`: built from `Dockerfile.logger`, runs collector only
+- `processor`: built from `Dockerfile.processor`, runs worker only
+- `nats`: official image `nats:2.10-alpine`
+
+Critical runtime constraints:
+- `logger` and `processor` MUST mount the same data volume at the same container path: `/app/data`
+- NATS discovery MUST use service name: `nats://nats:4222`
+- Startup order SHOULD be: `nats -> processor -> logger`
+
+Prepare environment:
+
+```bash
+cp .env.example .env
+```
+
+Start NATS + processor first:
+
+```bash
+docker compose up -d nats processor
+```
+
+Then start logger:
+
+```bash
+docker compose up -d logger
+```
+
+View logs:
+
+```bash
+docker compose logs -f logger processor nats
+```
+
+Stop all services:
+
+```bash
+docker compose down
+```
+
+Troubleshooting:
+- If compose fails with `CHAT_IMAGE_TAGGER_TOOL_ROOT_HOST` error:
+  - set a valid host path in `.env` for Eagle_AItagger_byWD1.4
+- If `processor` cannot read image files:
+  - ensure both `logger` and `processor` are mounting the same `chat-data` volume to `/app/data`
+- If early messages are missing:
+  - verify startup order and ensure `processor` subscription is ready before starting `logger`
+
+Validation notes (2026-03-05):
+- Unit tests: `.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` passed (`12/12`)
+- Compose linting: `docker compose config` requires `.env` and `CHAT_IMAGE_TAGGER_TOOL_ROOT_HOST` value
+- End-to-end runtime validation (`logger -> nats -> processor`) still requires real QQ bot credentials and a valid tagger tool path
+
 ### Manual/local fallback modes
 
 ```bash
