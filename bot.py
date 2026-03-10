@@ -1,17 +1,6 @@
-import nonebot
-from nonebot.adapters.qq import Adapter as QQAdapter
+from __future__ import annotations
 
-from telemetry import init_telemetry, install_error_hooks
-
-
-def main() -> None:
-    init_telemetry()
-    install_error_hooks()
-    nonebot.init()
-    driver = nonebot.get_driver()
-    driver.register_adapter(QQAdapter)
-    nonebot.load_plugins("plugins")
-    nonebot.run()
+from napcat_logger_service import run as main
 
 
 if __name__ == "__main__":

@@ -39,5 +39,9 @@ async def main() -> None:
         await close_db()
 
 
-if __name__ == "__main__":
+def run() -> None:
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run()

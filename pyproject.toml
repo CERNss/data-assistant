@@ -5,27 +5,15 @@ description = "data-assistant"
 readme = "README.md"
 requires-python = ">=3.10, <4.0"
 dependencies = [
-    "nonebot2[fastapi]>=2.4.4",
-    "nonebot2[aiohttp]>=2.4.4",
-    "nonebot-adapter-qq>=1.6.6",
+    "aiohttp>=3.9.0",
+    "asyncpg>=0.29.0",
+    "Pillow>=10.0.0",
+    "loguru>=0.7.0",
     "opentelemetry-sdk>=1.30.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.30.0",
     "nats-py>=2.9.0",
 ]
 
 [project.scripts]
-data-assistant-logger = "bot:main"
-data-assistant-processor = "plugins.chat_image.tagger_worker:main"
-
-[tool.nonebot]
-plugin_dirs = ["plugins"]
-builtin_plugins = []
-
-[tool.nonebot.adapters]
-nonebot-adapter-qq = [
-    { name = "QQ", module_name = "nonebot.adapters.qq" }
-]
-"@local" = []
-
-[tool.nonebot.plugins]
-"@local" = []
+data-assistant-logger = "napcat_logger_service:run"
+data-assistant-processor = "data_processor_service:main"
