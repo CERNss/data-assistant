@@ -1,7 +1,7 @@
 # Agents Guide (data-assistant)
 
-This repo is a small Python/NoneBot2 app that logs QQ group events and archives chat images.
-It optionally publishes tagging tasks to NATS and runs an external image tagger worker.
+This repo is a small Python service app that ingests NapCat OneBot11 events, archives chat images,
+and optionally publishes tagging tasks to NATS for an external image tagger worker.
 
 No Cursor rules were found in `.cursor/rules/` or `.cursorrules`.
 No Copilot rules were found in `.github/copilot-instructions.md`.
@@ -21,11 +21,12 @@ Python requirement: `>=3.10` (Dockerfiles use `python:3.11-slim`).
 
 ### Run (local)
 
-- Logger service (collector bot):
-  - `python data_logger_service.py` (thin wrapper around `bot.py`)
-  - or `python bot.py`
+- Logger service (NapCat reverse WS server):
+  - `python -m services.data_logger.main`
+  - or `python data_logger_service.py` (compat wrapper)
 - Processor service (tagger worker):
-  - `python data_processor_service.py`
+  - `python -m services.data_processor.main`
+  - or `python data_processor_service.py` (compat wrapper)
   - or `python -m plugins.chat_image.tagger_worker`
 - Manual local tagging (no NATS):
   - `python -m plugins.chat_image.tagger_cli`

@@ -9,9 +9,9 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install -r /app/requirements.txt
 
-COPY data_processor_service.py /app/data_processor_service.py
+COPY services /app/services
 COPY plugins /app/plugins
 
 RUN mkdir -p /app/data
 
-CMD ["python", "data_processor_service.py"]
+CMD ["python", "-m", "services.data_processor.main"]

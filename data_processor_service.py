@@ -1,4 +1,4 @@
-from plugins.chat_image.tagger_worker import main
+from services.data_processor.main import main
 
 
 if __name__ == "__main__":

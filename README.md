@@ -7,8 +7,11 @@
 
 ## Services
 
-- Logger entrypoint: `python napcat_logger_service.py`
-- Processor entrypoint: `python data_processor_service.py`
+- Logger entrypoint: `python -m services.data_logger.main`
+- Processor entrypoint: `python -m services.data_processor.main`
+- Service folders:
+  - `services/data_logger/`
+  - `services/data_processor/`
 
 ## Local Setup
 
@@ -58,13 +61,13 @@ POSTGRES_DSN=postgresql://admin:password@db:5432/app_db
 Start processor first:
 
 ```bash
-python data_processor_service.py
+python -m services.data_processor.main
 ```
 
 Then start logger:
 
 ```bash
-python napcat_logger_service.py
+python -m services.data_logger.main
 ```
 
 ## Docker Compose Topology

@@ -1,4 +1,4 @@
-from napcat_logger_service import run as main
+from services.data_logger.main import run as main
 
 
 if __name__ == "__main__":

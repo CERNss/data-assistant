@@ -41,7 +41,7 @@ services:
   processor:
     build:
       context: .
-      dockerfile: Dockerfile.processor
+      dockerfile: services/data_processor/Dockerfile
     env_file:
       - .env
     environment:
@@ -67,7 +67,7 @@ services:
   logger:
     build:
       context: .
-      dockerfile: Dockerfile.logger
+      dockerfile: services/data_logger/Dockerfile
     env_file:
       - .env
     environment:
