@@ -1,3 +1,4 @@
-from .service import save_message_images
+from __future__ import annotations
 
-__all__ = ["save_message_images"]
+# Intentionally empty: submodules are imported directly by consumers.
+# service.py is superseded by plugins/napcat/pipeline.py in the NapCat migration.

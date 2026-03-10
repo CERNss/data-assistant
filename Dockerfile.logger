@@ -11,9 +11,10 @@ RUN pip install -r /app/requirements.txt
 
 COPY bot.py /app/bot.py
 COPY data_logger_service.py /app/data_logger_service.py
+COPY napcat_logger_service.py /app/napcat_logger_service.py
 COPY telemetry.py /app/telemetry.py
 COPY plugins /app/plugins
 
 RUN mkdir -p /app/data
 
-CMD ["python", "data_logger_service.py"]
+CMD ["python", "napcat_logger_service.py"]

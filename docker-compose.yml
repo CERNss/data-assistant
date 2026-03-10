@@ -11,6 +11,33 @@ services:
     networks:
       - data-assistant-net
 
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: app_db
+    ports:
+      - "25432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - data-assistant-net
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.dev
+      PGADMIN_DEFAULT_PASSWORD: pgadmin
+    ports:
+      - "25050:80"
+    depends_on:
+      - db
+    restart: unless-stopped
+    networks:
+      - data-assistant-net
+
   processor:
     build:
       context: .
@@ -44,19 +71,24 @@ services:
     env_file:
       - .env
     environment:
+      NAPCAT_WS_HOST: "0.0.0.0"
+      NAPCAT_WS_PORT: "3001"
+      NAPCAT_ACTION_TIMEOUT_SEC: "8.0"
       CHAT_IMAGE_NATS_ENABLED: "true"
       CHAT_IMAGE_NATS_SERVERS: "nats://nats:4222"
       CHAT_IMAGE_TAGGER_ENABLED: "false"
       CHAT_IMAGE_SAVE_DIR: "/app/data/chat_images"
       GROUP_IMAGE_SAVE_DIR: "/app/data/chat_images"
       OTEL_SERVICE_NAME: "data-assistant-logger"
+      POSTGRES_DSN: "postgresql://admin:password@db:5432/app_db"
     ports:
-      - "8080:8080"
+      - "3001:3001"
     volumes:
       - chat-data:/app/data
     depends_on:
       - nats
       - processor
+      - db
     restart: unless-stopped
     networks:
       - data-assistant-net
@@ -64,6 +96,7 @@ services:
 volumes:
   chat-data:
   nats-data:
+  pg-data:
 
 networks:
   data-assistant-net:

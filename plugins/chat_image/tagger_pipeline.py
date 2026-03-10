@@ -9,21 +9,35 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from nonebot import logger
-from opentelemetry import trace
+from loguru import logger
 
 from .audit import append_json_line
 from .config import ChatImageConfig
 
+try:
+    from opentelemetry import trace
 
-TRACER = trace.get_tracer("data_assistant.plugins.chat_image.tagger_pipeline")
+    TRACER = trace.get_tracer("data_assistant.plugins.chat_image.tagger_pipeline")
+except ImportError:
+    # Fallback for test environments without opentelemetry
+    class _NoOpTracer:
+        def start_as_current_span(
+            self, name: str, attributes: dict[str, Any] | None = None
+        ):
+            from contextlib import nullcontext
+
+            return nullcontext()
+
+    TRACER = _NoOpTracer()
 QUEUE_LOCK = asyncio.Lock()
 AUTO_RUN_LOCK = asyncio.Lock()
 AUTO_RUN_TASK: asyncio.Task[None] | None = None
 
 BatchItem = dict[str, Any]
 BatchResult = dict[str, Any]
-TaggerRunner = Callable[[ChatImageConfig, list[BatchItem]], Awaitable[list[BatchResult]]]
+TaggerRunner = Callable[
+    [ChatImageConfig, list[BatchItem]], Awaitable[list[BatchResult]]
+]
 
 
 def _utc_now_iso() -> str:
@@ -83,7 +97,9 @@ def _build_tagger_command(config: ChatImageConfig, image_list_path: Path) -> lis
     entry_script = _resolve_tool_path(tagger.tool_root, tagger.entry_script)
     cmd = [tagger.python_bin, str(entry_script), "--image_list", str(image_list_path)]
     if tagger.config_file is not None:
-        cmd.extend(["--config", str(_resolve_tool_path(tagger.tool_root, tagger.config_file))])
+        cmd.extend(
+            ["--config", str(_resolve_tool_path(tagger.tool_root, tagger.config_file))]
+        )
     return cmd
 
 
@@ -95,7 +111,9 @@ def _link_or_copy(source: Path, target: Path) -> None:
         shutil.copy2(source, target)
 
 
-def _run_subprocess(cmd: list[str], cwd: Path, timeout_sec: float) -> subprocess.CompletedProcess[str]:
+def _run_subprocess(
+    cmd: list[str], cwd: Path, timeout_sec: float
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
         cwd=str(cwd),
@@ -151,7 +169,9 @@ async def _run_external_tagger_batch(
     cmd = _build_tagger_command(config, image_list_path)
     result_list: list[BatchResult] = []
     try:
-        completed = await asyncio.to_thread(_run_subprocess, cmd, tagger.tool_root, tagger.timeout_sec)
+        completed = await asyncio.to_thread(
+            _run_subprocess, cmd, tagger.tool_root, tagger.timeout_sec
+        )
         if completed.returncode != 0:
             message = (
                 f"tagger exited with code {completed.returncode}. "
@@ -218,7 +238,9 @@ async def enqueue_image_for_tagging(
     if not tagger.enabled:
         return
     if tagger.tool_root is None:
-        logger.warning("Tagger is enabled but CHAT_IMAGE_TAGGER_TOOL_ROOT is not configured")
+        logger.warning(
+            "Tagger is enabled but CHAT_IMAGE_TAGGER_TOOL_ROOT is not configured"
+        )
         return
 
     await enqueue_tagger_task_payload(

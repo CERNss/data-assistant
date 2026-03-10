@@ -4,7 +4,7 @@ import argparse
 import asyncio
 from typing import Any
 
-from nonebot import logger
+from loguru import logger
 
 from .config import ChatImageConfig, load_chat_image_config
 from .nats_task_bus import decode_tagger_task_payload
@@ -16,7 +16,9 @@ from .tagger_pipeline import (
 )
 
 
-async def handle_nats_message(*, config: ChatImageConfig, data: bytes, subject: str) -> None:
+async def handle_nats_message(
+    *, config: ChatImageConfig, data: bytes, subject: str
+) -> None:
     try:
         payload = decode_tagger_task_payload(data)
     except Exception as exc:
@@ -94,7 +96,9 @@ async def _run(process_backlog: bool) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run chat-image tagger worker with NATS.")
+    parser = argparse.ArgumentParser(
+        description="Run chat-image tagger worker with NATS."
+    )
     parser.add_argument(
         "--skip-backlog",
         action="store_true",

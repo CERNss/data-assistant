@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from nonebot import logger
+from loguru import logger
 
 from .config import ChatImageConfig
 
@@ -14,7 +14,9 @@ NATS_CLIENT: Any | None = None
 NATS_CONNECT_LOCK = asyncio.Lock()
 
 
-def build_tagger_task_payload(*, image_path: Path, context: dict[str, Any]) -> dict[str, Any]:
+def build_tagger_task_payload(
+    *, image_path: Path, context: dict[str, Any]
+) -> dict[str, Any]:
     return {
         "image_path": str(image_path.resolve()),
         "context": context,
@@ -41,16 +43,32 @@ def decode_tagger_task_payload(data: bytes) -> dict[str, Any]:
     }
 
 
-async def publish_tagger_task(config: ChatImageConfig, *, image_path: Path, context: dict[str, Any]) -> bool:
+async def publish_tagger_task(
+    config: ChatImageConfig, *, image_path: Path, context: dict[str, Any]
+) -> bool:
+    published, _ = await publish_tagger_task_with_result(
+        config,
+        image_path=image_path,
+        context=context,
+    )
+    return published
+
+
+async def publish_tagger_task_with_result(
+    config: ChatImageConfig,
+    *,
+    image_path: Path,
+    context: dict[str, Any],
+) -> tuple[bool, str | None]:
     if not config.nats.enabled:
-        return False
+        return False, "nats_disabled"
     payload = build_tagger_task_payload(image_path=image_path, context=context)
     data = encode_tagger_task_payload(payload)
     try:
         client = await _get_or_connect_nats(config)
         await client.publish(config.nats.subject, data)
         await client.flush(timeout=config.nats.publish_timeout_sec)
-        return True
+        return True, None
     except Exception as exc:
         logger.warning(
             "Failed to publish tagger task to NATS: subject={} image_path={} error={}",
@@ -58,7 +76,7 @@ async def publish_tagger_task(config: ChatImageConfig, *, image_path: Path, cont
             payload["image_path"],
             exc,
         )
-        return False
+        return False, str(exc)
 
 
 async def close_nats_publisher() -> None:

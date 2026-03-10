@@ -1,82 +1,131 @@
 # data-assistant
 
-## How to start
+`data-assistant` is a two-service pipeline:
 
-1. generate project using `nb create` .
-2. install plugins using `nb plugin install` .
-3. run services:
-   - collector (`data-logger`): `python data_logger_service.py`
-   - processor (`data-processor`): `python data_processor_service.py`
+- `data-logger`: receives NapCat OneBot11 events through reverse WebSocket, persists all events/images to PostgreSQL, and publishes image tagging tasks to NATS.
+- `data-processor`: consumes NATS tasks and runs Eagle_AItagger_byWD1.4.
 
-## Documentation
+## Services
 
-See [Docs](https://nonebot.dev/)
+- Logger entrypoint: `python napcat_logger_service.py`
+- Processor entrypoint: `python data_processor_service.py`
 
-## Group Message Logger
+## Local Setup
 
-- Entry point: `bot.py`
-- Plugin: `plugins/group_logger.py`
-- Output files:
-  - `data/group_messages.jsonl`: group message events
-  - `data/group_notices.jsonl`: group receive/reject notice events
+1. Create virtual environment:
 
-### QQ Adapter Config Example (`.env.prod`)
-
-```env
-DRIVER=~fastapi+~aiohttp
-HOST=127.0.0.1
-PORT=8080
-QQ_BOTS=[{"id":"<appid>","token":"<token>","secret":"<secret>"}]
-CHAT_IMAGE_SAVE_DIR=data/chat_images
-GROUP_IMAGE_TIMEOUT_SEC=20
-GROUP_IMAGE_RETRY_COUNT=3
-GROUP_IMAGE_RETRY_DELAY_SEC=0.8
-OTEL_ENABLED=true
-OTEL_SERVICE_NAME=data-assistant-logger
-OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317
-OTEL_EXPORTER_OTLP_INSECURE=true
-# Optional: key1=value1,key2=value2
-OTEL_EXPORTER_OTLP_HEADERS=
+```bash
+python -m venv .venv
+source .venv/bin/activate
 ```
 
-Note: the bot can only log events pushed by QQ platform after the bot is online and has permissions. It cannot read chat history retroactively.
+2. Install dependencies:
 
-## Group Image Archiving
+```bash
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+```
 
-- Images are saved by chat identity:
-  - Group chat: `<CHAT_IMAGE_SAVE_DIR>/group/<group_openid>/`
-  - Private chat: `<CHAT_IMAGE_SAVE_DIR>/private/<user_openid>/`
-- Audit log is written to:
-  - `data/group_images.jsonl`
-- Quality strategy:
-  - The bot downloads the attachment URL as-is (no compression/transcoding), preserving the best quality available from QQ attachment URL.
-- Retry strategy:
-  - On download failure, retry by `GROUP_IMAGE_RETRY_COUNT` with `GROUP_IMAGE_RETRY_DELAY_SEC` seconds delay between attempts.
-- Backward compatibility:
-  - `GROUP_IMAGE_SAVE_DIR` is still supported as a fallback if `CHAT_IMAGE_SAVE_DIR` is not set.
+3. Prepare environment:
 
-## Collect Then Tag (Eagle_AItagger_byWD1.4)
+```bash
+cp .env.example .env
+```
 
-- Integration target: [Ir-Phen/Eagle_AItagger_byWD1.4](https://github.com/Ir-Phen/Eagle_AItagger_byWD1.4)
-- Pipeline:
-  - Step 1: collector service (`bot.py`) collects and stores original images
-  - Step 2: collector publishes tagging task to NATS
-  - Step 3: tagger worker service subscribes NATS and executes tagging pipeline
-- Tagging audit log:
-  - `data/group_image_tags.jsonl`
+## NapCat Reverse WebSocket
 
-### Required env vars for tagger
+`data-logger` is the fixed server endpoint; NapCat connects to it as client.
+
+- Default endpoint: `ws://<logger-host>:3001/onebot/v11/ws`
+- Optional auth header: `Authorization: Bearer <NAPCAT_TOKEN>`
+
+Required logger env vars:
+
+```env
+NAPCAT_WS_HOST=0.0.0.0
+NAPCAT_WS_PORT=3001
+NAPCAT_WS_PATH=/onebot/v11/ws
+NAPCAT_TOKEN=
+NAPCAT_ACTION_TIMEOUT_SEC=8.0
+NAPCAT_RECONNECT_SEC=5.0
+NAPCAT_HEARTBEAT_TIMEOUT_SEC=60.0
+NAPCAT_BOT_QQ=0
+POSTGRES_DSN=postgresql://admin:password@db:5432/app_db
+```
+
+## Run Services Locally
+
+Start processor first:
+
+```bash
+python data_processor_service.py
+```
+
+Then start logger:
+
+```bash
+python napcat_logger_service.py
+```
+
+## Docker Compose Topology
+
+Compose includes 5 services:
+
+- `nats`
+- `db` (PostgreSQL)
+- `pgadmin`
+- `processor`
+- `logger`
+
+Start in recommended order:
+
+```bash
+docker compose up -d nats db processor
+docker compose up -d logger
+```
+
+View logs:
+
+```bash
+docker compose logs -f logger processor nats db pgadmin
+```
+
+Stop:
+
+```bash
+docker compose down
+```
+
+## Database Persistence
+
+Logger persists to PostgreSQL:
+
+- `onebot_events`: all inbound OneBot events (`message`, `message_sent`, `notice`, `request`, `meta_event`)
+- `onebot_message_images`: one row per extracted image segment, download state, metadata, dedup evidence, refresh trace, transfer state
+- `onebot_nats_dispatches`: NATS publish status (`published` / `failed` / `fallback_local`)
+
+## Image Handling
+
+- Primary URL source: `message[].data.url`
+- CQ fallback: parse `raw_message` (`[CQ:image,...,url=...]`)
+- URL-expiry handling: refresh chain `nc_get_rkey -> get_image -> get_file -> get_msg`
+- Metadata: SHA256, format, width/height, animated/frame_count, HTTP content-type/content-length
+- Dedup: hash-based duplicate detection with `duplicate` status
+
+## Tagger Integration
+
+Required env vars:
 
 ```env
 CHAT_IMAGE_TAGGER_ENABLED=true
 CHAT_IMAGE_TAGGER_TOOL_ROOT=/absolute/path/to/Eagle_AItagger_byWD1.4
 ```
 
-### NATS env vars
+NATS env vars:
 
 ```env
 CHAT_IMAGE_NATS_ENABLED=true
-CHAT_IMAGE_NATS_SERVERS=nats://127.0.0.1:4222
+CHAT_IMAGE_NATS_SERVERS=nats://nats:4222
 CHAT_IMAGE_NATS_SUBJECT=chat.image.tagger.task
 CHAT_IMAGE_NATS_QUEUE_GROUP=chat-image-tagger-workers
 CHAT_IMAGE_NATS_CLIENT_NAME=data-assistant
@@ -85,119 +134,22 @@ CHAT_IMAGE_NATS_PUBLISH_TIMEOUT_SEC=3
 CHAT_IMAGE_NATS_FALLBACK_LOCAL_QUEUE=true
 ```
 
-### Tagger optional env vars
+## Tests
 
-```env
-CHAT_IMAGE_TAGGER_AUTO_RUN=false
-CHAT_IMAGE_TAGGER_PYTHON=python
-CHAT_IMAGE_TAGGER_ENTRY_SCRIPT=main.py
-CHAT_IMAGE_TAGGER_CONFIG=config.ini
-CHAT_IMAGE_TAGGER_BATCH_SIZE=16
-CHAT_IMAGE_TAGGER_TIMEOUT_SEC=3600
-CHAT_IMAGE_TAGGER_MAX_ATTEMPTS=3
-CHAT_IMAGE_TAGGER_QUEUE_FILE=data/chat_image_tagger_queue.json
-CHAT_IMAGE_TAGGER_RUN_ROOT=data/chat_image_tagger_runs
-CHAT_IMAGE_TAGGER_AUDIT_LOG_FILE=data/group_image_tags.jsonl
-CHAT_IMAGE_TAGGER_KEEP_RUN_ARTIFACTS=false
-```
-
-### Run as two microservices
-
-Start NATS first (example):
+Run unit tests:
 
 ```bash
-nats-server -js
+python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-Start processor service (`data-processor`) first:
+Syntax/import validation:
 
 ```bash
-python data_processor_service.py
+python -m compileall .
 ```
 
-Then start collector service (`data-logger`):
+## Observability
 
-```bash
-python data_logger_service.py
-```
-
-Note: current implementation uses core NATS pub/sub semantics. If no worker is subscribed, published tasks can be lost. For stronger delivery guarantees, use persistent messaging (for example, NATS JetStream durable consumers).
-
-### Run with Docker Compose (logger image + processor image + official NATS image)
-
-Container topology:
-- `logger`: built from `Dockerfile.logger`, runs collector only
-- `processor`: built from `Dockerfile.processor`, runs worker only
-- `nats`: official image `nats:2.10-alpine`
-
-Critical runtime constraints:
-- `logger` and `processor` MUST mount the same data volume at the same container path: `/app/data`
-- NATS discovery MUST use service name: `nats://nats:4222`
-- Startup order SHOULD be: `nats -> processor -> logger`
-
-Prepare environment:
-
-```bash
-cp .env.example .env
-```
-
-Start NATS + processor first:
-
-```bash
-docker compose up -d nats processor
-```
-
-Then start logger:
-
-```bash
-docker compose up -d logger
-```
-
-View logs:
-
-```bash
-docker compose logs -f logger processor nats
-```
-
-Stop all services:
-
-```bash
-docker compose down
-```
-
-Troubleshooting:
-- If compose fails with `CHAT_IMAGE_TAGGER_TOOL_ROOT_HOST` error:
-  - set a valid host path in `.env` for Eagle_AItagger_byWD1.4
-- If `processor` cannot read image files:
-  - ensure both `logger` and `processor` are mounting the same `chat-data` volume to `/app/data`
-- If early messages are missing:
-  - verify startup order and ensure `processor` subscription is ready before starting `logger`
-
-Validation notes (2026-03-05):
-- Unit tests: `.venv/bin/python -m unittest discover -s tests -p 'test_*.py'` passed (`12/12`)
-- Compose linting: `docker compose config` requires `.env` and `CHAT_IMAGE_TAGGER_TOOL_ROOT_HOST` value
-- End-to-end runtime validation (`logger -> nats -> processor`) still requires real QQ bot credentials and a valid tagger tool path
-
-### Manual/local fallback modes
-
-```bash
-python -m plugins.chat_image.tagger_cli
-```
-
-Only process one batch:
-
-```bash
-python -m plugins.chat_image.tagger_cli --once
-```
-
-## OTel + Signoz
-
-- Enable OTel by setting `OTEL_ENABLED=true`.
-- Traces and standard logging records are exported via OTLP gRPC.
-- Unhandled Python/thread/asyncio exceptions are captured and emitted as error logs.
-- Loguru logs are bridged into standard logging for unified OTLP log export.
-- For Signoz default self-hosted collector, set:
-  - `OTEL_EXPORTER_OTLP_ENDPOINT=http://<signoz-host>:4317`
-  - `OTEL_EXPORTER_OTLP_INSECURE=true` (or `false` when TLS is enabled)
-- Service identity in Signoz comes from:
-  - `OTEL_SERVICE_NAME`
+- Enable OTel: `OTEL_ENABLED=true`
+- Configure endpoint: `OTEL_EXPORTER_OTLP_ENDPOINT=http://<collector>:4317`
+- Service identity: `OTEL_SERVICE_NAME`

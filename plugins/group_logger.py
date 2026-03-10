@@ -14,7 +14,7 @@ from nonebot.adapters.qq.event import (
 from opentelemetry import trace
 
 from .chat_image.audit import append_json_line
-from .chat_image import save_message_images
+from .chat_image.service import save_message_images
 
 LOG_DIR = Path("data")
 MESSAGE_LOG_FILE = LOG_DIR / "group_messages.jsonl"

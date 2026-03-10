@@ -3,9 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from nonebot import logger
-from nonebot.adapters import Bot
-from opentelemetry import trace
+from loguru import logger
 
 from .audit import append_json_line
 from .config import load_chat_image_config
@@ -14,13 +12,26 @@ from .nats_task_bus import publish_tagger_task
 from .storage import build_image_save_path, is_image_attachment
 from .tagger_pipeline import enqueue_image_for_tagging, enqueue_tagger_task_payload
 
+try:
+    from opentelemetry import trace
 
-TRACER = trace.get_tracer("data_assistant.plugins.chat_image.service")
+    TRACER = trace.get_tracer("data_assistant.plugins.chat_image.service")
+except ImportError:
+    # Fallback for test environments without opentelemetry
+    class _NoOpTracer:
+        def start_as_current_span(
+            self, name: str, attributes: dict[str, Any] | None = None
+        ):
+            from contextlib import nullcontext
+
+            return nullcontext()
+
+    TRACER = _NoOpTracer()
 
 
 async def save_message_images(
     *,
-    bot: Bot,
+    bot: Any,
     event_name: str,
     chat_type: str,
     chat_id: str,
@@ -58,7 +69,9 @@ async def save_message_images(
                 "attachment": attachment.model_dump(mode="json"),
             }
             try:
-                raw_bytes, attempt_count = await download_image_bytes_with_retry(source_url, config)
+                raw_bytes, attempt_count = await download_image_bytes_with_retry(
+                    source_url, config
+                )
                 save_path = build_image_save_path(
                     save_root=config.save_root,
                     chat_type=chat_type,
