@@ -13,16 +13,18 @@ from unittest.mock import MagicMock, patch
 # ---------------------------------------------------------------------------
 if "asyncpg" not in sys.modules:
     _asyncpg_stub = types.ModuleType("asyncpg")
-    _asyncpg_stub.Pool = object  # type: ignore[attr-defined]
-    _asyncpg_stub.Connection = object  # type: ignore[attr-defined]
-    _asyncpg_stub.create_pool = MagicMock()  # type: ignore[attr-defined]
+    setattr(_asyncpg_stub, "Pool", object)
+    setattr(_asyncpg_stub, "Connection", object)
+    setattr(_asyncpg_stub, "create_pool", MagicMock())
     sys.modules["asyncpg"] = _asyncpg_stub
 
-from plugins.persistence.config import PostgresConfig, load_postgres_config  # noqa: E402
+from data_logger.service.persistence.config import PostgresConfig, load_postgres_config  # noqa: E402
 
 
 class TestPostgresConfigDefaults(unittest.TestCase):
     """load_postgres_config() returns correct default DSN when env var not set."""
+
+    _env_backup: dict[str, str] = {}
 
     def setUp(self) -> None:
         self._env_backup = os.environ.copy()
@@ -43,6 +45,8 @@ class TestPostgresConfigDefaults(unittest.TestCase):
 
 class TestPostgresConfigEnvOverride(unittest.TestCase):
     """load_postgres_config() reads DSN from POSTGRES_DSN env var."""
+
+    _env_backup: dict[str, str] = {}
 
     def setUp(self) -> None:
         self._env_backup = os.environ.copy()

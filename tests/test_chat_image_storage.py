@@ -1,7 +1,10 @@
 import unittest
 from pathlib import Path
 
-from plugins.chat_image.storage import build_image_save_path, is_image_attachment
+from data_logger.service.chat_image.storage import (
+    build_image_save_path,
+    is_image_attachment,
+)
 
 
 class TestChatImageStorage(unittest.TestCase):
@@ -9,7 +12,9 @@ class TestChatImageStorage(unittest.TestCase):
         self.assertTrue(is_image_attachment("image/png", None, None))
         self.assertTrue(is_image_attachment(None, "photo.JPG", None))
         self.assertTrue(is_image_attachment(None, None, "https://x/y/z.webp"))
-        self.assertFalse(is_image_attachment("application/pdf", "a.pdf", "https://x/y/z.pdf"))
+        self.assertFalse(
+            is_image_attachment("application/pdf", "a.pdf", "https://x/y/z.pdf")
+        )
 
     def test_build_image_save_path(self) -> None:
         path = build_image_save_path(
@@ -22,4 +27,7 @@ class TestChatImageStorage(unittest.TestCase):
             source_url=None,
         )
         self.assertTrue(str(path).startswith("/tmp/chat-images/group/group123/"))
-        self.assertTrue(str(path).endswith("_msg456_2_hello.png") or "msg456_2_hello.png" in str(path))
+        self.assertTrue(
+            str(path).endswith("_msg456_2_hello.png")
+            or "msg456_2_hello.png" in str(path)
+        )

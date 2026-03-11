@@ -3,8 +3,11 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from plugins.napcat.config import NapCatConfig
-from plugins.napcat.handler import is_probably_expired_url_error, refresh_image_url
+from data_logger.service.napcat.config import NapCatConfig
+from data_logger.service.napcat.handler import (
+    is_probably_expired_url_error,
+    refresh_image_url,
+)
 
 
 class _FakeActionClient:
@@ -14,10 +17,10 @@ class _FakeActionClient:
     async def call_action(
         self,
         action: str,
-        params: dict | None = None,
+        params: dict[str, object] | None = None,
         *,
         timeout_sec: float,
-    ) -> dict:
+    ) -> dict[str, object]:
         queue = self._scripted.get(action)
         if not queue:
             raise RuntimeError(f"unexpected action: {action}")
@@ -53,7 +56,9 @@ class TestExpiredUrlHeuristic(unittest.TestCase):
 
 class TestRefreshImageUrl(unittest.IsolatedAsyncioTestCase):
     async def test_returns_connection_error_when_no_action_channel(self) -> None:
-        with patch("plugins.napcat.handler.get_action_client", return_value=None):
+        with patch(
+            "data_logger.service.napcat.handler.get_action_client", return_value=None
+        ):
             result = await refresh_image_url("abc.image", _cfg(), message_id="1")
 
         self.assertIsNone(result.url)
@@ -76,7 +81,9 @@ class TestRefreshImageUrl(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        with patch("plugins.napcat.handler.get_action_client", return_value=client):
+        with patch(
+            "data_logger.service.napcat.handler.get_action_client", return_value=client
+        ):
             result = await refresh_image_url("abc.image", _cfg(), message_id="2")
 
         self.assertEqual(result.url, "https://example.com/a.jpg")
@@ -108,7 +115,9 @@ class TestRefreshImageUrl(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        with patch("plugins.napcat.handler.get_action_client", return_value=client):
+        with patch(
+            "data_logger.service.napcat.handler.get_action_client", return_value=client
+        ):
             result = await refresh_image_url("def.image", _cfg(), message_id="3")
 
         self.assertEqual(result.url, "https://example.com/from-msg.jpg")
@@ -125,7 +134,9 @@ class TestRefreshImageUrl(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        with patch("plugins.napcat.handler.get_action_client", return_value=client):
+        with patch(
+            "data_logger.service.napcat.handler.get_action_client", return_value=client
+        ):
             result = await refresh_image_url("xyz.image", _cfg(), message_id="4")
 
         self.assertIsNone(result.url)

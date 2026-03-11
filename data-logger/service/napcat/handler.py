@@ -32,7 +32,7 @@ class RefreshResult:
 
 
 async def handle_raw_event(
-    raw: dict,
+    raw: dict[str, Any],
     persist_callback: PersistCallback | None = None,
 ) -> None:
     try:

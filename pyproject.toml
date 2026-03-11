@@ -15,5 +15,5 @@ dependencies = [
 ]
 
 [project.scripts]
-data-assistant-logger = "services.data_logger.main:run"
-data-assistant-processor = "services.data_processor.main:main"
+data-assistant-logger = "napcat_logger_service:run"
+data-assistant-processor = "data_processor_service:main"

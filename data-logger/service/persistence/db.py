@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from typing import Any
+
 import asyncpg
 from loguru import logger
 
 from .config import PostgresConfig
 
-_POOL: asyncpg.Pool | None = None
+_pool: asyncpg.Pool | None = None
 
 DDL_SQL = """
 CREATE TABLE IF NOT EXISTS onebot_events (
@@ -93,26 +95,26 @@ CREATE INDEX IF NOT EXISTS idx_onebot_nats_status ON onebot_nats_dispatches(stat
 
 
 async def init_db(config: PostgresConfig) -> None:
-    global _POOL
-    _POOL = await asyncpg.create_pool(config.dsn, min_size=2, max_size=10)
-    async with _POOL.acquire() as conn:
+    global _pool
+    _pool = await asyncpg.create_pool(config.dsn, min_size=2, max_size=10)
+    async with _pool.acquire() as conn:
         await _run_ddl(conn)
     logger.info("PostgreSQL pool initialized: dsn={}", config.dsn)
 
 
 def get_pool() -> asyncpg.Pool:
-    if _POOL is None:
+    if _pool is None:
         raise RuntimeError("DB pool not initialized. Call init_db() first.")
-    return _POOL
+    return _pool
 
 
 async def close_db() -> None:
-    global _POOL
-    if _POOL is not None:
-        await _POOL.close()
-        _POOL = None
+    global _pool
+    if _pool is not None:
+        await _pool.close()
+        _pool = None
         logger.info("PostgreSQL pool closed.")
 
 
-async def _run_ddl(conn: asyncpg.Connection) -> None:
+async def _run_ddl(conn: Any) -> None:
     await conn.execute(DDL_SQL)

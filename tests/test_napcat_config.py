@@ -4,11 +4,13 @@ import os
 import unittest
 from unittest.mock import patch
 
-from plugins.napcat.config import NapCatConfig, load_napcat_config
+from data_logger.service.napcat.config import NapCatConfig, load_napcat_config
 
 
 class TestNapCatConfigDefaults(unittest.TestCase):
     """load_napcat_config() returns correct defaults when no env vars set."""
+
+    _env_backup: dict[str, str] = {}
 
     def setUp(self) -> None:
         self._env_backup = os.environ.copy()
@@ -60,6 +62,8 @@ class TestNapCatConfigDefaults(unittest.TestCase):
 
 class TestNapCatConfigEnvOverrides(unittest.TestCase):
     """load_napcat_config() picks up env var overrides correctly."""
+
+    _env_backup: dict[str, str] = {}
 
     def setUp(self) -> None:
         self._env_backup = os.environ.copy()

@@ -17,7 +17,7 @@ from .config import ChatImageConfig
 try:
     from opentelemetry import trace
 
-    TRACER = trace.get_tracer("data_assistant.plugins.chat_image.tagger_pipeline")
+    tracer = trace.get_tracer("data_assistant.plugins.chat_image.tagger_pipeline")
 except ImportError:
     # Fallback for test environments without opentelemetry
     class _NoOpTracer:
@@ -28,10 +28,10 @@ except ImportError:
 
             return nullcontext()
 
-    TRACER = _NoOpTracer()
+    tracer = _NoOpTracer()
 QUEUE_LOCK = asyncio.Lock()
 AUTO_RUN_LOCK = asyncio.Lock()
-AUTO_RUN_TASK: asyncio.Task[None] | None = None
+auto_run_task: asyncio.Task[None] | None = None
 
 BatchItem = dict[str, Any]
 BatchResult = dict[str, Any]
@@ -308,7 +308,7 @@ async def run_tagger_once(
     summary["picked"] = len(batch_items)
 
     runner_impl = runner or _run_external_tagger_batch
-    with TRACER.start_as_current_span(
+    with tracer.start_as_current_span(
         "chat_image.tagger.run_batch",
         attributes={
             "chat.image.tagger.batch_size": len(batch_items),
@@ -416,11 +416,11 @@ async def run_tagger_until_empty(
 
 
 async def ensure_tagger_auto_run(config: ChatImageConfig) -> None:
-    global AUTO_RUN_TASK
+    global auto_run_task
     async with AUTO_RUN_LOCK:
-        if AUTO_RUN_TASK is not None and not AUTO_RUN_TASK.done():
+        if auto_run_task is not None and not auto_run_task.done():
             return
-        AUTO_RUN_TASK = asyncio.create_task(_auto_run_worker(config))
+        auto_run_task = asyncio.create_task(_auto_run_worker(config))
 
 
 async def _auto_run_worker(config: ChatImageConfig) -> None:

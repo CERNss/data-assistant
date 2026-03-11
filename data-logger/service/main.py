@@ -5,15 +5,15 @@ import asyncio
 from loguru import logger
 
 import telemetry
-from plugins.napcat.config import load_napcat_config
-from plugins.napcat.connection import run_server
-from plugins.napcat.handler import handle_raw_event
-from plugins.napcat.pipeline import persist_event
-from plugins.persistence.config import load_postgres_config
-from plugins.persistence.db import close_db, init_db
+from .napcat.config import load_napcat_config
+from .napcat.connection import run_server
+from .napcat.handler import handle_raw_event
+from .napcat.pipeline import persist_event
+from .persistence.config import load_postgres_config
+from .persistence.db import close_db, init_db
 
 
-async def _on_event(raw: dict) -> None:
+async def _on_event(raw: dict[str, object]) -> None:
     await handle_raw_event(raw, persist_callback=persist_event)
 
 

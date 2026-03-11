@@ -70,8 +70,8 @@ def _derive_stream_state(image: ImageSegment) -> tuple[str, str | None, str | No
 
 
 async def persist_event(event: OneBotEvent) -> None:
-    from plugins.chat_image.config import load_chat_image_config
-    from plugins.persistence.repository import insert_event
+    from ..chat_image.config import load_chat_image_config
+    from ..persistence.repository import insert_event
 
     chat_config = load_chat_image_config()
     napcat_config = load_napcat_config()
@@ -122,19 +122,15 @@ async def _process_image(
     chat_config: Any,
     napcat_config: NapCatConfig,
 ) -> None:
-    from plugins.chat_image.audit import append_json_line
-    from plugins.chat_image.downloader import download_image_with_retry
-    from plugins.chat_image.nats_task_bus import (
+    from ..chat_image.audit import append_json_line
+    from ..chat_image.downloader import download_image_with_retry
+    from ..chat_image.nats_publisher import (
         build_tagger_task_payload,
         publish_tagger_task_with_result,
     )
-    from plugins.chat_image.storage import build_image_save_path
-    from plugins.chat_image.tagger_pipeline import (
-        enqueue_image_for_tagging,
-        enqueue_tagger_task_payload,
-    )
-    from plugins.persistence.db import get_pool
-    from plugins.persistence.repository import (
+    from ..chat_image.storage import build_image_save_path
+    from ..persistence.db import get_pool
+    from ..persistence.repository import (
         insert_image,
         insert_nats_dispatch,
         update_image_download_duplicate,
@@ -462,11 +458,17 @@ async def _process_image(
         "original_url": original_url,
     }
 
-    nats_payload = build_tagger_task_payload(image_path=save_path, context=tag_context)
+    nats_payload = build_tagger_task_payload(
+        image_id=image_id,
+        sha256=hash_sha256,
+        source_url=active_url,
+        original_url=original_url,
+        context=tag_context,
+        image_path=save_path,
+    )
     published, publish_error = await publish_tagger_task_with_result(
         chat_config,
-        image_path=save_path,
-        context=tag_context,
+        payload=nats_payload,
     )
 
     nats_status: str
@@ -476,37 +478,6 @@ async def _process_image(
     else:
         nats_status = "failed"
         nats_error = publish_error or "nats_publish_failed"
-        if chat_config.nats.enabled and chat_config.nats.fallback_to_local_queue:
-            try:
-                await enqueue_tagger_task_payload(
-                    config=chat_config,
-                    payload={"image_path": str(save_path), "context": tag_context},
-                )
-                nats_status = "fallback_local"
-            except Exception as exc:
-                nats_error = f"{nats_error}; local_fallback_failed={exc}"
-                logger.error(
-                    "Local queue fallback failed: event_id={} image_id={} error={}",
-                    event_id,
-                    image_id,
-                    exc,
-                )
-        elif not chat_config.nats.enabled:
-            try:
-                await enqueue_image_for_tagging(
-                    config=chat_config,
-                    image_path=save_path,
-                    context=tag_context,
-                )
-                nats_status = "fallback_local"
-            except Exception as exc:
-                nats_error = f"{nats_error}; local_enqueue_failed={exc}"
-                logger.error(
-                    "Local enqueue failed: event_id={} image_id={} error={}",
-                    event_id,
-                    image_id,
-                    exc,
-                )
 
     try:
         await insert_nats_dispatch(

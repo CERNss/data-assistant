@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from plugins.chat_image.tagger_worker import main as run_tagger_worker
+from .chat_image.tagger_worker import main as run_tagger_worker
 
 
 def main() -> None:

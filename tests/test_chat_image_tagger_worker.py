@@ -1,19 +1,22 @@
+from __future__ import annotations
+
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from plugins.chat_image.config import ChatImageConfig, NatsTaskBusConfig, TaggerPipelineConfig
-from plugins.chat_image.tagger_worker import handle_nats_message
+from contracts.chat_image_task import TaskV2
+from data_processor.service.chat_image.config import (
+    ChatImageConfig,
+    NatsTaskBusConfig,
+    TaggerPipelineConfig,
+)
+from data_processor.service.chat_image.tagger_worker import handle_nats_message
 
 
 class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
     def _build_config(self, *, auto_run: bool = False) -> ChatImageConfig:
         return ChatImageConfig(
             save_root=Path("data/chat_images"),
-            timeout_sec=20.0,
-            retry_count=3,
-            retry_delay_sec=0.8,
-            audit_log_file=Path("data/group_images.jsonl"),
             nats=NatsTaskBusConfig(
                 enabled=True,
                 servers=("nats://127.0.0.1:4222",),
@@ -21,8 +24,6 @@ class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
                 queue_group="chat-image-tagger-workers",
                 client_name="data-assistant",
                 connect_timeout_sec=5.0,
-                publish_timeout_sec=3.0,
-                fallback_to_local_queue=True,
             ),
             tagger=TaggerPipelineConfig(
                 enabled=True,
@@ -45,11 +46,11 @@ class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
         config = self._build_config()
         with (
             patch(
-                "plugins.chat_image.tagger_worker.decode_tagger_task_payload",
+                "data_processor.service.chat_image.tagger_worker.decode_task",
                 side_effect=ValueError("bad payload"),
             ),
             patch(
-                "plugins.chat_image.tagger_worker.enqueue_tagger_task_payload",
+                "data_processor.service.chat_image.tagger_worker.enqueue_tagger_task_payload",
                 new=AsyncMock(),
             ) as enqueue_mock,
         ):
@@ -59,18 +60,34 @@ class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
 
     async def test_handle_message_runs_once_when_auto_run_disabled(self) -> None:
         config = self._build_config(auto_run=False)
+        task = TaskV2(
+            version=2,
+            image_id=1,
+            sha256="abc123",
+            source_url="https://example.com/a.png",
+            original_url="https://example.com/a.png",
+            context={"message_id": "1", "seq": 0},
+            image_path="/tmp/a.png",
+        )
         with (
             patch(
-                "plugins.chat_image.tagger_worker.decode_tagger_task_payload",
-                return_value={"image_path": "/tmp/a.png", "context": {"m": "1"}},
+                "data_processor.service.chat_image.tagger_worker.decode_task",
+                return_value=task,
             ),
             patch(
-                "plugins.chat_image.tagger_worker.enqueue_tagger_task_payload",
+                "data_processor.service.chat_image.tagger_worker._resolve_task_image_path",
+                return_value="/tmp/a.png",
+            ),
+            patch(
+                "data_processor.service.chat_image.tagger_worker.enqueue_tagger_task_payload",
                 new=AsyncMock(),
             ) as enqueue_mock,
-            patch("plugins.chat_image.tagger_worker.run_tagger_once", new=AsyncMock()) as run_once_mock,
             patch(
-                "plugins.chat_image.tagger_worker.ensure_tagger_auto_run",
+                "data_processor.service.chat_image.tagger_worker.run_tagger_once",
+                new=AsyncMock(),
+            ) as run_once_mock,
+            patch(
+                "data_processor.service.chat_image.tagger_worker.ensure_tagger_auto_run",
                 new=AsyncMock(),
             ) as auto_run_mock,
         ):
@@ -82,17 +99,37 @@ class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
 
     async def test_handle_message_swallows_processing_error(self) -> None:
         config = self._build_config(auto_run=False)
+        task = TaskV2(
+            version=2,
+            image_id=1,
+            sha256="abc123",
+            source_url="https://example.com/a.png",
+            original_url="https://example.com/a.png",
+            context={"message_id": "1", "seq": 0},
+            image_path="/tmp/a.png",
+        )
         with (
             patch(
-                "plugins.chat_image.tagger_worker.decode_tagger_task_payload",
-                return_value={"image_path": "/tmp/a.png", "context": {}},
+                "data_processor.service.chat_image.tagger_worker.decode_task",
+                return_value=task,
             ),
             patch(
-                "plugins.chat_image.tagger_worker.enqueue_tagger_task_payload",
+                "data_processor.service.chat_image.tagger_worker._resolve_task_image_path",
+                return_value="/tmp/a.png",
+            ),
+            patch(
+                "data_processor.service.chat_image.tagger_worker.enqueue_tagger_task_payload",
                 new=AsyncMock(side_effect=RuntimeError("disk error")),
             ),
-            patch("plugins.chat_image.tagger_worker.run_tagger_once", new=AsyncMock()) as run_once_mock,
+            patch(
+                "data_processor.service.chat_image.tagger_worker.run_tagger_once",
+                new=AsyncMock(),
+            ) as run_once_mock,
         ):
             await handle_nats_message(config=config, data=b"{}", subject="test.subject")
 
         run_once_mock.assert_not_awaited()
+
+
+if __name__ == "__main__":
+    unittest.main()

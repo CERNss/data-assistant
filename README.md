@@ -7,11 +7,13 @@
 
 ## Services
 
-- Logger entrypoint: `python -m services.data_logger.main`
-- Processor entrypoint: `python -m services.data_processor.main`
+- Logger entrypoint: `python3 -m data_logger.service.main`
+- Processor entrypoint: `python3 -m data_processor.service.main`
 - Service folders:
-  - `services/data_logger/`
-  - `services/data_processor/`
+  - `data-logger/service/`
+  - `data-processor/service/`
+- Shared contract package:
+  - `contracts/chat_image_task.py`
 
 ## Local Setup
 
@@ -61,13 +63,13 @@ POSTGRES_DSN=postgresql://admin:password@db:5432/app_db
 Start processor first:
 
 ```bash
-python -m services.data_processor.main
+python3 -m data_processor.service.main
 ```
 
 Then start logger:
 
 ```bash
-python -m services.data_logger.main
+python3 -m data_logger.service.main
 ```
 
 ## Docker Compose Topology
@@ -105,7 +107,7 @@ Logger persists to PostgreSQL:
 
 - `onebot_events`: all inbound OneBot events (`message`, `message_sent`, `notice`, `request`, `meta_event`)
 - `onebot_message_images`: one row per extracted image segment, download state, metadata, dedup evidence, refresh trace, transfer state
-- `onebot_nats_dispatches`: NATS publish status (`published` / `failed` / `fallback_local`)
+- `onebot_nats_dispatches`: NATS publish status (`published` / `failed`)
 
 ## Image Handling
 
@@ -134,7 +136,6 @@ CHAT_IMAGE_NATS_QUEUE_GROUP=chat-image-tagger-workers
 CHAT_IMAGE_NATS_CLIENT_NAME=data-assistant
 CHAT_IMAGE_NATS_CONNECT_TIMEOUT_SEC=5
 CHAT_IMAGE_NATS_PUBLISH_TIMEOUT_SEC=3
-CHAT_IMAGE_NATS_FALLBACK_LOCAL_QUEUE=true
 ```
 
 ## Tests
@@ -142,13 +143,13 @@ CHAT_IMAGE_NATS_FALLBACK_LOCAL_QUEUE=true
 Run unit tests:
 
 ```bash
-python -m unittest discover -s tests -p 'test_*.py'
+python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
 Syntax/import validation:
 
 ```bash
-python -m compileall .
+python3 -m compileall .
 ```
 
 ## Observability

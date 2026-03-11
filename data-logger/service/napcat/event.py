@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass
+from typing import Any
 
 
 # Matches [CQ:image,...,url=<value>] in raw_message; group(1) = raw URL value.
@@ -18,7 +19,9 @@ class ImageSegment:
     sub_type: str | None  # normalised to str; protocol may send int (0/1)
     file_size: int | None
     summary: str | None
-    raw_segment: dict  # full segment dict; synthetic {"_source":"cq_fallback"} for CQ
+    raw_segment: dict[
+        str, Any
+    ]  # full segment dict; synthetic {"_source":"cq_fallback"} for CQ
 
 
 @dataclass
@@ -33,14 +36,14 @@ class OneBotEvent:
     group_id: int | None
     group_name: str | None
     raw_message: str | None
-    message_segments: list[dict] | None  # set when message field is an array
+    message_segments: list[dict[str, Any]] | None  # set when message field is an array
     message_cq: str | None  # set when message field is a CQ string
-    sender: dict | None
+    sender: dict[str, Any] | None
     images: list[ImageSegment]
-    raw: dict
+    raw: dict[str, Any]
 
 
-def _extract_images_from_segments(segments: list[dict]) -> list[ImageSegment]:
+def _extract_images_from_segments(segments: list[dict[str, Any]]) -> list[ImageSegment]:
     result: list[ImageSegment] = []
     for seq, seg in enumerate(segments):
         if not isinstance(seg, dict) or seg.get("type") != "image":
@@ -93,7 +96,7 @@ def _extract_images_from_cq(cq_str: str) -> list[ImageSegment]:
     return result
 
 
-def parse_event(raw: dict) -> OneBotEvent:
+def parse_event(raw: dict[str, Any]) -> OneBotEvent:
     """Parse raw OneBot11 dict → OneBotEvent.
 
     Raises ValueError if time, self_id, or post_type are absent or malformed.
@@ -141,12 +144,12 @@ def parse_event(raw: dict) -> OneBotEvent:
     group_name: str | None = raw.get("group_name") or None
     raw_msg_field = raw.get("raw_message")
     raw_message: str | None = raw_msg_field if isinstance(raw_msg_field, str) else None
-    sender: dict | None = (
+    sender: dict[str, Any] | None = (
         raw.get("sender") if isinstance(raw.get("sender"), dict) else None
     )
 
     message_field = raw.get("message")
-    message_segments: list[dict] | None = None
+    message_segments: list[dict[str, Any]] | None = None
     message_cq: str | None = None
     images: list[ImageSegment] = []
 

@@ -22,15 +22,15 @@ Python requirement: `>=3.10` (Dockerfiles use `python:3.11-slim`).
 ### Run (local)
 
 - Logger service (NapCat reverse WS server):
-  - `python -m services.data_logger.main`
+  - `python3 -m data_logger.service.main`
   - or `python data_logger_service.py` (compat wrapper)
 - Processor service (tagger worker):
-  - `python -m services.data_processor.main`
+  - `python3 -m data_processor.service.main`
   - or `python data_processor_service.py` (compat wrapper)
-  - or `python -m plugins.chat_image.tagger_worker`
+  - or `python3 -m data_processor.service.chat_image.tagger_worker`
 - Manual local tagging (no NATS):
-  - `python -m plugins.chat_image.tagger_cli`
-  - one batch: `python -m plugins.chat_image.tagger_cli --once`
+  - `python3 -m data_processor.service.chat_image.tagger_cli`
+  - one batch: `python3 -m data_processor.service.chat_image.tagger_cli --once`
 
 ### Docker Compose (logger + processor + NATS)
 
@@ -48,23 +48,23 @@ Python requirement: `>=3.10` (Dockerfiles use `python:3.11-slim`).
 Tests are `unittest`-based (including async via `unittest.IsolatedAsyncioTestCase`).
 
 - Run all tests:
-  - `python -m unittest discover -s tests -p 'test_*.py'`
+  - `python3 -m unittest discover -s tests -p 'test_*.py'`
 
 - Run a single test module:
-  - `python -m unittest tests.test_chat_image_storage`
+  - `python3 -m unittest tests.test_chat_image_storage`
 
 - Run a single test class:
-  - `python -m unittest tests.test_chat_image_tagger_worker.TestChatImageTaggerWorker`
+  - `python3 -m unittest tests.test_chat_image_tagger_worker.TestChatImageTaggerWorker`
 
 - Run a single test method:
-  - `python -m unittest tests.test_chat_image_tagger_pipeline.TestChatImageTaggerPipeline.test_run_once_success`
+  - `python3 -m unittest tests.test_chat_image_tagger_pipeline.TestChatImageTaggerPipeline.test_run_once_success`
 
 ### Lint / Format
 
 There is no repo-pinned linter/formatter config (no `ruff.toml`, `pyproject` tool config, etc.).
 
 - Minimal sanity check:
-  - `python -m compileall .`
+  - `python3 -m compileall .`
 
 - Optional (if you install ruff locally):
   - `python -m pip install ruff`
@@ -77,8 +77,8 @@ There is no repo-pinned linter/formatter config (no `ruff.toml`, `pyproject` too
 
 - If a module uses postponed annotations, keep `from __future__ import annotations` as the first import.
 - Group imports: stdlib, third-party, then local.
-- Prefer package-relative imports inside `plugins/` (e.g. `from .audit import ...`).
-- Tests typically import via the repo root package path (e.g. `from plugins.chat_image...`).
+- Prefer package-relative imports inside service packages (e.g. `from .audit import ...`).
+- Tests typically import via the repo root package path (e.g. `from data_logger.service...` or `from data_processor.service...`).
 
 ### Formatting
 
@@ -95,15 +95,15 @@ There is no repo-pinned linter/formatter config (no `ruff.toml`, `pyproject` too
 ### Naming
 
 - Functions/vars: `snake_case`; classes: `PascalCase`; constants: `UPPER_SNAKE_CASE`.
-- Keep env var names stable and documented; config parsing lives in `plugins/chat_image/config.py`.
-- Tracer names follow dotted paths like `data_assistant.plugins.chat_image.<module>`.
+- Keep env var names stable and documented; config parsing lives in service-scoped modules under `data-logger/service/chat_image/` and `data-processor/service/chat_image/`.
+- Tracer names follow dotted paths like `data_assistant.<service>.<module>`.
 
 ### Logging and Tracing
 
-- In NoneBot/plugin code, use `nonebot.logger` (Loguru-style `{}` formatting):
+- Use Loguru-style `{}` formatting in service code:
   - `logger.info("Saved chat image: path={} size={}", path, size)`
 - In non-NoneBot utilities, standard `logging` may use `%s` formatting (see `telemetry.py`).
-- Wrap meaningful operations with OpenTelemetry spans when appropriate (pattern in `plugins/group_logger.py`).
+- Wrap meaningful operations with OpenTelemetry spans when appropriate (pattern in `data-logger/service/napcat/pipeline.py`).
 
 ### Error Handling
 
@@ -115,7 +115,7 @@ There is no repo-pinned linter/formatter config (no `ruff.toml`, `pyproject` too
 ### I/O and Data Files
 
 - Runtime output goes under `data/` (gitignored). Do not commit generated `.jsonl` logs or queues.
-- JSON output uses UTF-8 and `ensure_ascii=False` (see `plugins/chat_image/audit.py`).
+- JSON output uses UTF-8 and `ensure_ascii=False` (see `data-logger/service/chat_image/audit.py`).
 - When persisting structured state, prefer atomic writes (write tmp + replace) as done for tagger queue.
 
 ### Async / Concurrency

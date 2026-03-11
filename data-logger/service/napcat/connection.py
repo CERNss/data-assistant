@@ -82,24 +82,24 @@ class OneBotActionClient:
         self._pending.clear()
 
 
-_ACTION_CLIENT: OneBotActionClient | None = None
+_action_client: OneBotActionClient | None = None
 
 
 def get_action_client() -> OneBotActionClient | None:
-    return _ACTION_CLIENT
+    return _action_client
 
 
 def _set_action_client(client: OneBotActionClient | None) -> None:
-    global _ACTION_CLIENT
-    old = _ACTION_CLIENT
-    _ACTION_CLIENT = client
+    global _action_client
+    old = _action_client
+    _action_client = client
     if old is not None and old is not client:
         old.close("NapCat action channel replaced by newer connection")
 
 
 async def run_server(
     config: NapCatConfig,
-    on_event: Callable[[dict], Awaitable[None]],
+    on_event: Callable[[dict[str, Any]], Awaitable[None]],
 ) -> None:
     app = aiohttp.web.Application()
     app.router.add_route("GET", config.ws_path, _make_ws_handler(config, on_event))
@@ -125,7 +125,7 @@ async def _block_forever() -> None:
 
 def _make_ws_handler(
     config: NapCatConfig,
-    on_event: Callable[[dict], Awaitable[None]],
+    on_event: Callable[[dict[str, Any]], Awaitable[None]],
 ) -> Callable[[aiohttp.web.Request], Awaitable[aiohttp.web.WebSocketResponse]]:
     async def _handler(request: aiohttp.web.Request) -> aiohttp.web.WebSocketResponse:
         if config.token:

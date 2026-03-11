@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import unittest
 
-from plugins.napcat.event import ImageSegment, OneBotEvent, parse_event
+from data_logger.service.napcat.event import ImageSegment, OneBotEvent, parse_event
 
 
 # ---------------------------------------------------------------------------
 # Shared test payloads
 # ---------------------------------------------------------------------------
 
-PRIVATE_TEXT_EVENT: dict = {
+PRIVATE_TEXT_EVENT: dict[str, object] = {
     "time": 1700000000,
     "self_id": 3755597070,
     "post_type": "message",
@@ -23,7 +23,7 @@ PRIVATE_TEXT_EVENT: dict = {
     "message_format": "array",
 }
 
-GROUP_IMAGE_EVENT: dict = {
+GROUP_IMAGE_EVENT: dict[str, object] = {
     "time": 1700000001,
     "self_id": 3755597070,
     "post_type": "message",
@@ -50,7 +50,7 @@ GROUP_IMAGE_EVENT: dict = {
     "message_format": "array",
 }
 
-CQ_IMAGE_EVENT: dict = {
+CQ_IMAGE_EVENT: dict[str, object] = {
     "time": 1700000002,
     "self_id": 3755597070,
     "post_type": "message",
@@ -64,7 +64,7 @@ CQ_IMAGE_EVENT: dict = {
     "message_format": "string",
 }
 
-META_HEARTBEAT_EVENT: dict = {
+META_HEARTBEAT_EVENT: dict[str, object] = {
     "time": 1700000003,
     "self_id": 3755597070,
     "post_type": "meta_event",
@@ -73,7 +73,7 @@ META_HEARTBEAT_EVENT: dict = {
     "interval": 5000,
 }
 
-NOTICE_EVENT: dict = {
+NOTICE_EVENT: dict[str, object] = {
     "time": 1700000004,
     "self_id": 3755597070,
     "post_type": "notice",
@@ -111,12 +111,16 @@ class TestParseEventPrivateText(unittest.TestCase):
     def test_message_segments_populated(self) -> None:
         evt = parse_event(PRIVATE_TEXT_EVENT)
         self.assertIsNotNone(evt.message_segments)
-        self.assertEqual(len(evt.message_segments), 1)  # type: ignore[arg-type]
+        segments = evt.message_segments
+        assert segments is not None
+        self.assertEqual(len(segments), 1)
 
     def test_sender_preserved(self) -> None:
         evt = parse_event(PRIVATE_TEXT_EVENT)
         self.assertIsNotNone(evt.sender)
-        self.assertEqual(evt.sender["nickname"], "TestUser")  # type: ignore[index]
+        sender = evt.sender
+        assert sender is not None
+        self.assertEqual(sender["nickname"], "TestUser")
 
     def test_group_id_none_for_private(self) -> None:
         evt = parse_event(PRIVATE_TEXT_EVENT)
@@ -179,7 +183,9 @@ class TestParseEventCQString(unittest.TestCase):
     def test_cq_message_stored(self) -> None:
         evt = parse_event(CQ_IMAGE_EVENT)
         self.assertIsNotNone(evt.message_cq)
-        self.assertIn("CQ:image", evt.message_cq)  # type: ignore[operator]
+        message_cq = evt.message_cq
+        assert message_cq is not None
+        self.assertIn("CQ:image", message_cq)
 
     def test_images_extracted_from_cq(self) -> None:
         evt = parse_event(CQ_IMAGE_EVENT)
@@ -202,7 +208,7 @@ class TestParseEventCQString(unittest.TestCase):
 
 
 class TestParseEventMissingFields(unittest.TestCase):
-    def _base(self) -> dict:
+    def _base(self) -> dict[str, object]:
         return {
             "time": 1700000000,
             "self_id": 3755597070,

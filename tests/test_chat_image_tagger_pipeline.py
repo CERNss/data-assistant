@@ -2,9 +2,14 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import cast
 
-from plugins.chat_image.config import ChatImageConfig, NatsTaskBusConfig, TaggerPipelineConfig
-from plugins.chat_image.tagger_pipeline import (
+from data_processor.service.chat_image.config import (
+    ChatImageConfig,
+    NatsTaskBusConfig,
+    TaggerPipelineConfig,
+)
+from data_processor.service.chat_image.tagger_pipeline import (
     enqueue_image_for_tagging,
     get_pending_tagger_count,
     run_tagger_once,
@@ -12,15 +17,14 @@ from plugins.chat_image.tagger_pipeline import (
 
 
 class TestChatImageTaggerPipeline(unittest.IsolatedAsyncioTestCase):
+    _tmpdir: tempfile.TemporaryDirectory[str] | None = None
+    _config: ChatImageConfig | None = None
+
     def setUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory()
         root = Path(self._tmpdir.name)
         self._config = ChatImageConfig(
             save_root=root / "images",
-            timeout_sec=20.0,
-            retry_count=3,
-            retry_delay_sec=0.8,
-            audit_log_file=root / "group_images.jsonl",
             nats=NatsTaskBusConfig(
                 enabled=False,
                 servers=("nats://127.0.0.1:4222",),
@@ -28,8 +32,6 @@ class TestChatImageTaggerPipeline(unittest.IsolatedAsyncioTestCase):
                 queue_group="chat-image-tagger-workers",
                 client_name="test",
                 connect_timeout_sec=3.0,
-                publish_timeout_sec=2.0,
-                fallback_to_local_queue=True,
             ),
             tagger=TaggerPipelineConfig(
                 enabled=True,
@@ -47,61 +49,98 @@ class TestChatImageTaggerPipeline(unittest.IsolatedAsyncioTestCase):
                 keep_run_artifacts=False,
             ),
         )
-        self._config.tagger.tool_root.mkdir(parents=True, exist_ok=True)
+        config = cast(ChatImageConfig, self._config)
+        tool_root = config.tagger.tool_root
+        assert tool_root is not None
+        tool_root.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self) -> None:
-        self._tmpdir.cleanup()
+        if self._tmpdir is not None:
+            self._tmpdir.cleanup()
 
     async def test_enqueue_is_deduplicated(self) -> None:
+        assert self._tmpdir is not None
+        config = cast(ChatImageConfig, self._config)
         image_path = Path(self._tmpdir.name) / "image.png"
         image_path.write_bytes(b"abc")
 
-        await enqueue_image_for_tagging(config=self._config, image_path=image_path, context={})
-        await enqueue_image_for_tagging(config=self._config, image_path=image_path, context={})
+        await enqueue_image_for_tagging(
+            config=config, image_path=image_path, context={}
+        )
+        await enqueue_image_for_tagging(
+            config=config, image_path=image_path, context={}
+        )
 
-        self.assertEqual(get_pending_tagger_count(self._config), 1)
+        self.assertEqual(get_pending_tagger_count(config), 1)
 
     async def test_run_once_success(self) -> None:
+        assert self._tmpdir is not None
+        config = cast(ChatImageConfig, self._config)
         image_path = Path(self._tmpdir.name) / "image-success.png"
         image_path.write_bytes(b"abc")
-        await enqueue_image_for_tagging(config=self._config, image_path=image_path, context={"m": "1"})
+        await enqueue_image_for_tagging(
+            config=config, image_path=image_path, context={"m": "1"}
+        )
 
-        async def fake_runner(_: ChatImageConfig, items: list[dict]) -> list[dict]:
-            return [{"item": item, "status": "success", "tags": ["cat", "outdoor"]} for item in items]
+        async def fake_runner(
+            _: ChatImageConfig,
+            items: list[dict[str, object]],
+        ) -> list[dict[str, object]]:
+            return [
+                {"item": item, "status": "success", "tags": ["cat", "outdoor"]}
+                for item in items
+            ]
 
-        summary = await run_tagger_once(self._config, runner=fake_runner)
+        summary = await run_tagger_once(config, runner=fake_runner)
         self.assertEqual(summary["picked"], 1)
         self.assertEqual(summary["success"], 1)
         self.assertEqual(summary["failed"], 0)
         self.assertEqual(summary["requeued"], 0)
-        self.assertEqual(get_pending_tagger_count(self._config), 0)
+        self.assertEqual(get_pending_tagger_count(config), 0)
 
-        lines = self._config.tagger.audit_log_file.read_text(encoding="utf-8").strip().splitlines()
+        lines = (
+            config.tagger.audit_log_file.read_text(encoding="utf-8")
+            .strip()
+            .splitlines()
+        )
         self.assertEqual(len(lines), 1)
         payload = json.loads(lines[0])
         self.assertEqual(payload["status"], "success")
         self.assertEqual(payload["tag_count"], 2)
 
     async def test_run_once_requeue_then_fail(self) -> None:
+        assert self._tmpdir is not None
+        config = cast(ChatImageConfig, self._config)
         image_path = Path(self._tmpdir.name) / "image-fail.png"
         image_path.write_bytes(b"abc")
-        await enqueue_image_for_tagging(config=self._config, image_path=image_path, context={})
+        await enqueue_image_for_tagging(
+            config=config, image_path=image_path, context={}
+        )
 
-        async def fail_runner(_: ChatImageConfig, items: list[dict]) -> list[dict]:
-            return [{"item": item, "status": "failed", "error": "boom"} for item in items]
+        async def fail_runner(
+            _: ChatImageConfig,
+            items: list[dict[str, object]],
+        ) -> list[dict[str, object]]:
+            return [
+                {"item": item, "status": "failed", "error": "boom"} for item in items
+            ]
 
-        first = await run_tagger_once(self._config, runner=fail_runner)
+        first = await run_tagger_once(config, runner=fail_runner)
         self.assertEqual(first["picked"], 1)
         self.assertEqual(first["failed"], 1)
         self.assertEqual(first["requeued"], 1)
-        self.assertEqual(get_pending_tagger_count(self._config), 1)
+        self.assertEqual(get_pending_tagger_count(config), 1)
 
-        second = await run_tagger_once(self._config, runner=fail_runner)
+        second = await run_tagger_once(config, runner=fail_runner)
         self.assertEqual(second["picked"], 1)
         self.assertEqual(second["failed"], 1)
         self.assertEqual(second["requeued"], 0)
-        self.assertEqual(get_pending_tagger_count(self._config), 0)
+        self.assertEqual(get_pending_tagger_count(config), 0)
 
-        lines = self._config.tagger.audit_log_file.read_text(encoding="utf-8").strip().splitlines()
+        lines = (
+            config.tagger.audit_log_file.read_text(encoding="utf-8")
+            .strip()
+            .splitlines()
+        )
         statuses = [json.loads(line)["status"] for line in lines]
         self.assertEqual(statuses, ["retrying", "failed"])

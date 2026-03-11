@@ -15,9 +15,9 @@ if "asyncpg" not in sys.modules:
     setattr(_asyncpg_stub, "create_pool", MagicMock())
     sys.modules["asyncpg"] = _asyncpg_stub
 
-from plugins.napcat.config import NapCatConfig
-from plugins.napcat.event import ImageSegment, OneBotEvent
-from plugins.napcat.pipeline import _derive_stream_state, _process_image
+from data_logger.service.napcat.config import NapCatConfig
+from data_logger.service.napcat.event import ImageSegment, OneBotEvent
+from data_logger.service.napcat.pipeline import _derive_stream_state, _process_image
 
 
 def _napcat_config() -> NapCatConfig:
@@ -102,14 +102,16 @@ class TestProcessImageMissingUrl(unittest.IsolatedAsyncioTestCase):
 
             with (
                 patch(
-                    "plugins.persistence.repository.insert_image",
+                    "data_logger.service.persistence.repository.insert_image",
                     new_callable=AsyncMock,
                 ) as mock_insert_image,
                 patch(
-                    "plugins.persistence.repository.update_image_download_failure",
+                    "data_logger.service.persistence.repository.update_image_download_failure",
                     new_callable=AsyncMock,
                 ) as mock_update_failure,
-                patch("plugins.chat_image.audit.append_json_line") as mock_append,
+                patch(
+                    "data_logger.service.chat_image.audit.append_json_line"
+                ) as mock_append,
             ):
                 mock_insert_image.return_value = 42
 

@@ -41,7 +41,7 @@ services:
   processor:
     build:
       context: .
-      dockerfile: services/data_processor/Dockerfile
+      dockerfile: data-processor/Dockerfile
     env_file:
       - .env
     environment:
@@ -67,7 +67,7 @@ services:
   logger:
     build:
       context: .
-      dockerfile: services/data_logger/Dockerfile
+      dockerfile: data-logger/Dockerfile
     env_file:
       - .env
     environment:
@@ -87,7 +87,6 @@ services:
       - chat-data:/app/data
     depends_on:
       - nats
-      - processor
       - db
     restart: unless-stopped
     networks:

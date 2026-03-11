@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
+from contracts.chat_image_task import TaskV2, decode_task
+
 from .config import ChatImageConfig, load_chat_image_config
-from .nats_task_bus import decode_tagger_task_payload
 from .tagger_pipeline import (
     enqueue_tagger_task_payload,
     ensure_tagger_auto_run,
@@ -20,10 +23,25 @@ async def handle_nats_message(
     *, config: ChatImageConfig, data: bytes, subject: str
 ) -> None:
     try:
-        payload = decode_tagger_task_payload(data)
+        task = decode_task(data)
     except Exception as exc:
         logger.warning("Ignore invalid NATS payload on {}: {}", subject, exc)
         return
+
+    image_path = _resolve_task_image_path(config, task)
+    if image_path is None:
+        logger.warning(
+            "Ignore unresolved NATS payload on {}: image_id={} sha256={}",
+            subject,
+            task.image_id,
+            task.sha256,
+        )
+        return
+
+    payload = {
+        "image_path": image_path,
+        "context": task.context,
+    }
 
     try:
         await enqueue_tagger_task_payload(config=config, payload=payload)
@@ -33,6 +51,68 @@ async def handle_nats_message(
             await run_tagger_once(config)
     except Exception as exc:
         logger.warning("Failed to process NATS payload on {}: {}", subject, exc)
+
+
+def _resolve_task_image_path(config: ChatImageConfig, task: TaskV2) -> str | None:
+    if task.image_path:
+        candidate = Path(task.image_path).expanduser()
+        if candidate.exists() and candidate.is_file():
+            return str(candidate.resolve())
+
+    legacy_path = task.context.get("image_path")
+    if isinstance(legacy_path, str) and legacy_path.strip():
+        candidate = Path(legacy_path.strip()).expanduser()
+        if candidate.exists() and candidate.is_file():
+            return str(candidate.resolve())
+
+    chat_type = str(task.context.get("chat_type") or "").strip()
+    chat_id = str(task.context.get("chat_id") or "").strip()
+    message_id = str(task.context.get("message_id") or "").strip()
+    seq_value = task.context.get("seq")
+
+    if not message_id:
+        return None
+
+    if isinstance(seq_value, bool):
+        seq = None
+    elif isinstance(seq_value, int):
+        seq = seq_value
+    elif isinstance(seq_value, str):
+        try:
+            seq = int(seq_value)
+        except ValueError:
+            seq = None
+    else:
+        seq = None
+
+    search_root = config.save_root
+    if chat_type and chat_id:
+        search_root = search_root / chat_type / chat_id
+
+    if not search_root.exists() or not search_root.is_dir():
+        return None
+
+    if seq is None:
+        pattern = f"*_{message_id}_*"
+    else:
+        pattern = f"*_{message_id}_{seq}_*"
+
+    candidates = [path for path in search_root.glob(pattern) if path.is_file()]
+    if not candidates:
+        return None
+
+    expected_sha = task.sha256.strip()
+    if expected_sha:
+        for candidate in candidates:
+            if _file_sha256(candidate) == expected_sha:
+                return str(candidate.resolve())
+
+    candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return str(candidates[0].resolve())
+
+
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 async def _run(process_backlog: bool) -> int:
