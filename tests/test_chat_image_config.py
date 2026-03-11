@@ -4,10 +4,10 @@ import os
 import unittest
 from pathlib import Path
 
-from data_logger.service.chat_image.config import (
+from logger_service.service.chat_image.config import (
     load_chat_image_config as load_logger_chat_image_config,
 )
-from data_processor.service.chat_image.config import (
+from processor_service.service.chat_image.config import (
     load_chat_image_config as load_processor_chat_image_config,
 )
 

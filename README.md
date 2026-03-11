@@ -2,16 +2,16 @@
 
 `data-assistant` is a two-service pipeline:
 
-- `data-logger`: receives NapCat OneBot11 events through reverse WebSocket, persists all events/images to PostgreSQL, and publishes image tagging tasks to NATS.
-- `data-processor`: consumes NATS tasks and runs Eagle_AItagger_byWD1.4.
+- `logger_service`: receives NapCat OneBot11 events through reverse WebSocket, persists all events/images to PostgreSQL, and publishes image tagging tasks to NATS.
+- `processor_service`: consumes NATS tasks and runs Eagle_AItagger_byWD1.4.
 
 ## Services
 
-- Logger entrypoint: `python3 -m data_logger.service.main`
-- Processor entrypoint: `python3 -m data_processor.service.main`
+- Logger entrypoint: `python3 -m logger_service.service.main`
+- Processor entrypoint: `python3 -m processor_service.service.main`
 - Service folders:
-  - `data-logger/service/`
-  - `data-processor/service/`
+  - `logger_service/service/`
+  - `processor_service/service/`
 - Shared contract package:
   - `contracts/chat_image_task.py`
 
@@ -39,7 +39,7 @@ cp .env.example .env
 
 ## NapCat Reverse WebSocket
 
-`data-logger` is the fixed server endpoint; NapCat connects to it as client.
+`logger_service` is the fixed server endpoint; NapCat connects to it as client.
 
 - Default endpoint: `ws://<logger-host>:3001/onebot/v11/ws`
 - Optional auth header: `Authorization: Bearer <NAPCAT_TOKEN>`
@@ -63,13 +63,13 @@ POSTGRES_DSN=postgresql://admin:password@db:5432/app_db
 Start processor first:
 
 ```bash
-python3 -m data_processor.service.main
+python3 -m processor_service.service.main
 ```
 
 Then start logger:
 
 ```bash
-python3 -m data_logger.service.main
+python3 -m logger_service.service.main
 ```
 
 ## Docker Compose Topology

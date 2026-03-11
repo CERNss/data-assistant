@@ -1,15 +1,15 @@
 ## ADDED Requirements
 
 ### Requirement: Canonical runtime layout uses dual top-level service directories
-The repository MUST expose canonical runtime entrypoints under top-level `data-logger/` and `data-processor/` service directories.
+The repository MUST expose canonical runtime entrypoints under top-level `logger_service/` and `processor_service/` service directories.
 
 #### Scenario: Logger canonical entrypoint
 - **WHEN** service files are inspected
-- **THEN** logger entrypoint MUST exist at `data-logger/service/main.py`
+- **THEN** logger entrypoint MUST exist at `logger_service/service/main.py`
 
 #### Scenario: Processor canonical entrypoint
 - **WHEN** service files are inspected
-- **THEN** processor entrypoint MUST exist at `data-processor/service/main.py`
+- **THEN** processor entrypoint MUST exist at `processor_service/service/main.py`
 
 ### Requirement: Logger and processor are decoupled at runtime boundary
 Logger and processor MUST communicate through NATS protocol boundaries only, not through cross-imported local queue APIs.
@@ -38,8 +38,8 @@ Docker Compose MUST build each service from its corresponding top-level Dockerfi
 
 #### Scenario: Compose logger dockerfile path
 - **WHEN** `docker-compose.yml` is loaded
-- **THEN** logger build config MUST reference `dockerfile: data-logger/Dockerfile`
+- **THEN** logger build config MUST reference `dockerfile: logger_service/Dockerfile`
 
 #### Scenario: Compose processor dockerfile path
 - **WHEN** `docker-compose.yml` is loaded
-- **THEN** processor build config MUST reference `dockerfile: data-processor/Dockerfile`
+- **THEN** processor build config MUST reference `dockerfile: processor_service/Dockerfile`

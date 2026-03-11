@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from data_logger.service.chat_image.storage import (
+from logger_service.service.chat_image.storage import (
     build_image_save_path,
     is_image_attachment,
 )

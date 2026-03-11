@@ -4,7 +4,7 @@ import asyncio
 
 from loguru import logger
 
-import telemetry
+from . import telemetry
 from .napcat.config import load_napcat_config
 from .napcat.connection import run_server
 from .napcat.handler import handle_raw_event

@@ -22,10 +22,10 @@ Logger and processor are already separated by process, but they are still couple
 ## Impact
 
 - Affected code:
-  - `plugins/napcat/pipeline.py`
-  - `plugins/chat_image/nats_task_bus.py`
-  - `plugins/chat_image/tagger_worker.py`
-  - `plugins/chat_image/tagger_pipeline.py`
+  - `logger_service/service/napcat/pipeline.py`
+  - `logger_service/service/chat_image/nats_publisher.py`
+  - `processor_service/service/chat_image/tagger_worker.py`
+  - `processor_service/service/chat_image/tagger_pipeline.py`
   - `docker-compose.yml`
   - `README.md`
 - New code:

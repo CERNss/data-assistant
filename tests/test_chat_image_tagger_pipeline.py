@@ -4,12 +4,12 @@ import unittest
 from pathlib import Path
 from typing import cast
 
-from data_processor.service.chat_image.config import (
+from processor_service.service.chat_image.config import (
     ChatImageConfig,
     NatsTaskBusConfig,
     TaggerPipelineConfig,
 )
-from data_processor.service.chat_image.tagger_pipeline import (
+from processor_service.service.chat_image.tagger_pipeline import (
     enqueue_image_for_tagging,
     get_pending_tagger_count,
     run_tagger_once,

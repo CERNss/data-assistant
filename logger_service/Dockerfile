@@ -9,7 +9,7 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install -r /app/requirements.txt
 
-COPY data-processor/service /app/service
+COPY logger_service/service /app/service
 COPY contracts /app/contracts
 
 RUN mkdir -p /app/data

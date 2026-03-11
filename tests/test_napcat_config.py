@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from data_logger.service.napcat.config import NapCatConfig, load_napcat_config
+from logger_service.service.napcat.config import NapCatConfig, load_napcat_config
 
 
 class TestNapCatConfigDefaults(unittest.TestCase):

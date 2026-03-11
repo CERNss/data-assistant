@@ -9,8 +9,7 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install -r /app/requirements.txt
 
-COPY data-logger/service /app/service
-COPY telemetry.py /app/telemetry.py
+COPY processor_service/service /app/service
 COPY contracts /app/contracts
 
 RUN mkdir -p /app/data

@@ -22,15 +22,13 @@ Python requirement: `>=3.10` (Dockerfiles use `python:3.11-slim`).
 ### Run (local)
 
 - Logger service (NapCat reverse WS server):
-  - `python3 -m data_logger.service.main`
-  - or `python data_logger_service.py` (compat wrapper)
+  - `python3 -m logger_service.service.main`
 - Processor service (tagger worker):
-  - `python3 -m data_processor.service.main`
-  - or `python data_processor_service.py` (compat wrapper)
-  - or `python3 -m data_processor.service.chat_image.tagger_worker`
+  - `python3 -m processor_service.service.main`
+  - or `python3 -m processor_service.service.chat_image.tagger_worker`
 - Manual local tagging (no NATS):
-  - `python3 -m data_processor.service.chat_image.tagger_cli`
-  - one batch: `python3 -m data_processor.service.chat_image.tagger_cli --once`
+  - `python3 -m processor_service.service.chat_image.tagger_cli`
+  - one batch: `python3 -m processor_service.service.chat_image.tagger_cli --once`
 
 ### Docker Compose (logger + processor + NATS)
 
@@ -78,7 +76,7 @@ There is no repo-pinned linter/formatter config (no `ruff.toml`, `pyproject` too
 - If a module uses postponed annotations, keep `from __future__ import annotations` as the first import.
 - Group imports: stdlib, third-party, then local.
 - Prefer package-relative imports inside service packages (e.g. `from .audit import ...`).
-- Tests typically import via the repo root package path (e.g. `from data_logger.service...` or `from data_processor.service...`).
+- Tests typically import via the repo root package path (e.g. `from logger_service.service...` or `from processor_service.service...`).
 
 ### Formatting
 
@@ -95,15 +93,15 @@ There is no repo-pinned linter/formatter config (no `ruff.toml`, `pyproject` too
 ### Naming
 
 - Functions/vars: `snake_case`; classes: `PascalCase`; constants: `UPPER_SNAKE_CASE`.
-- Keep env var names stable and documented; config parsing lives in service-scoped modules under `data-logger/service/chat_image/` and `data-processor/service/chat_image/`.
+- Keep env var names stable and documented; config parsing lives in service-scoped modules under `logger_service/service/chat_image/` and `processor_service/service/chat_image/`.
 - Tracer names follow dotted paths like `data_assistant.<service>.<module>`.
 
 ### Logging and Tracing
 
 - Use Loguru-style `{}` formatting in service code:
   - `logger.info("Saved chat image: path={} size={}", path, size)`
-- In non-NoneBot utilities, standard `logging` may use `%s` formatting (see `telemetry.py`).
-- Wrap meaningful operations with OpenTelemetry spans when appropriate (pattern in `data-logger/service/napcat/pipeline.py`).
+- In non-NoneBot utilities, standard `logging` may use `%s` formatting (see `logger_service/service/telemetry.py`).
+- Wrap meaningful operations with OpenTelemetry spans when appropriate (pattern in `logger_service/service/napcat/pipeline.py`).
 
 ### Error Handling
 
@@ -115,7 +113,7 @@ There is no repo-pinned linter/formatter config (no `ruff.toml`, `pyproject` too
 ### I/O and Data Files
 
 - Runtime output goes under `data/` (gitignored). Do not commit generated `.jsonl` logs or queues.
-- JSON output uses UTF-8 and `ensure_ascii=False` (see `data-logger/service/chat_image/audit.py`).
+- JSON output uses UTF-8 and `ensure_ascii=False` (see `logger_service/service/chat_image/audit.py`).
 - When persisting structured state, prefer atomic writes (write tmp + replace) as done for tagger queue.
 
 ### Async / Concurrency

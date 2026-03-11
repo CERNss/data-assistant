@@ -18,7 +18,10 @@ if "asyncpg" not in sys.modules:
     setattr(_asyncpg_stub, "create_pool", MagicMock())
     sys.modules["asyncpg"] = _asyncpg_stub
 
-from data_logger.service.persistence.config import PostgresConfig, load_postgres_config  # noqa: E402
+from logger_service.service.persistence.config import (
+    PostgresConfig,
+    load_postgres_config,
+)  # noqa: E402
 
 
 class TestPostgresConfigDefaults(unittest.TestCase):

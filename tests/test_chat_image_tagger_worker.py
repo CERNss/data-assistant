@@ -5,12 +5,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from contracts.chat_image_task import TaskV2
-from data_processor.service.chat_image.config import (
+from processor_service.service.chat_image.config import (
     ChatImageConfig,
     NatsTaskBusConfig,
     TaggerPipelineConfig,
 )
-from data_processor.service.chat_image.tagger_worker import handle_nats_message
+from processor_service.service.chat_image.tagger_worker import handle_nats_message
 
 
 class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
@@ -46,11 +46,11 @@ class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
         config = self._build_config()
         with (
             patch(
-                "data_processor.service.chat_image.tagger_worker.decode_task",
+                "processor_service.service.chat_image.tagger_worker.decode_task",
                 side_effect=ValueError("bad payload"),
             ),
             patch(
-                "data_processor.service.chat_image.tagger_worker.enqueue_tagger_task_payload",
+                "processor_service.service.chat_image.tagger_worker.enqueue_tagger_task_payload",
                 new=AsyncMock(),
             ) as enqueue_mock,
         ):
@@ -71,23 +71,23 @@ class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch(
-                "data_processor.service.chat_image.tagger_worker.decode_task",
+                "processor_service.service.chat_image.tagger_worker.decode_task",
                 return_value=task,
             ),
             patch(
-                "data_processor.service.chat_image.tagger_worker._resolve_task_image_path",
+                "processor_service.service.chat_image.tagger_worker._resolve_task_image_path",
                 return_value="/tmp/a.png",
             ),
             patch(
-                "data_processor.service.chat_image.tagger_worker.enqueue_tagger_task_payload",
+                "processor_service.service.chat_image.tagger_worker.enqueue_tagger_task_payload",
                 new=AsyncMock(),
             ) as enqueue_mock,
             patch(
-                "data_processor.service.chat_image.tagger_worker.run_tagger_once",
+                "processor_service.service.chat_image.tagger_worker.run_tagger_once",
                 new=AsyncMock(),
             ) as run_once_mock,
             patch(
-                "data_processor.service.chat_image.tagger_worker.ensure_tagger_auto_run",
+                "processor_service.service.chat_image.tagger_worker.ensure_tagger_auto_run",
                 new=AsyncMock(),
             ) as auto_run_mock,
         ):
@@ -110,19 +110,19 @@ class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch(
-                "data_processor.service.chat_image.tagger_worker.decode_task",
+                "processor_service.service.chat_image.tagger_worker.decode_task",
                 return_value=task,
             ),
             patch(
-                "data_processor.service.chat_image.tagger_worker._resolve_task_image_path",
+                "processor_service.service.chat_image.tagger_worker._resolve_task_image_path",
                 return_value="/tmp/a.png",
             ),
             patch(
-                "data_processor.service.chat_image.tagger_worker.enqueue_tagger_task_payload",
+                "processor_service.service.chat_image.tagger_worker.enqueue_tagger_task_payload",
                 new=AsyncMock(side_effect=RuntimeError("disk error")),
             ),
             patch(
-                "data_processor.service.chat_image.tagger_worker.run_tagger_once",
+                "processor_service.service.chat_image.tagger_worker.run_tagger_once",
                 new=AsyncMock(),
             ) as run_once_mock,
         ):

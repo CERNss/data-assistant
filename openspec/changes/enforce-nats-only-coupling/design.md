@@ -1,6 +1,6 @@
 ## Context
 
-The codebase has already separated logger and processor entry logic, but there are still coupling points that violate NATS-only interaction: path-based payloads (`image_path`) and fallback behavior that reaches processor-local queue APIs from logger code. In addition, the desired runtime layout is explicit dual top-level service directories (`data-logger/service`, `data-processor/service`) so ownership and deployment boundaries are visually and operationally clear.
+The codebase has already separated logger and processor entry logic, but there are still coupling points that violate NATS-only interaction: path-based payloads (`image_path`) and fallback behavior that reaches processor-local queue APIs from logger code. In addition, the desired runtime layout is explicit dual top-level service directories (`logger_service/service`, `processor_service/service`) so ownership and deployment boundaries are visually and operationally clear.
 
 ## Goals / Non-Goals
 
@@ -8,8 +8,8 @@ The codebase has already separated logger and processor entry logic, but there a
 - Enforce NATS as the only cross-service communication boundary.
 - Remove mandatory shared-filesystem contract between logger and processor.
 - Establish dual top-level service layout:
-  - `data-logger/service`
-  - `data-processor/service`
+  - `logger_service/service`
+  - `processor_service/service`
 - Keep backward compatibility during migration with controlled dual-format support.
 
 **Non-Goals:**
@@ -21,10 +21,10 @@ The codebase has already separated logger and processor entry logic, but there a
 
 ### 1) Dual top-level service directories are the canonical runtime layout
 - Decision: move canonical runtime entrypoints and per-service Dockerfiles under:
-  - `data-logger/service/main.py`
-  - `data-processor/service/main.py`
-  - `data-logger/Dockerfile`
-  - `data-processor/Dockerfile`
+  - `logger_service/service/main.py`
+  - `processor_service/service/main.py`
+  - `logger_service/Dockerfile`
+  - `processor_service/Dockerfile`
 - Rationale: this matches the desired operational mental model (two deployable services) better than a shared `services/` root.
 - Alternative considered: keep `services/data_logger` and `services/data_processor`; rejected because it weakens explicit top-level ownership requested by stakeholders.
 
@@ -51,12 +51,12 @@ The codebase has already separated logger and processor entry logic, but there a
 
 - [Risk] Contract migration introduces temporary complexity (dual formats) -> Mitigation: explicit version field, migration window, and removal criteria in tasks.
 - [Risk] Delivery semantics change can increase duplicate processing -> Mitigation: idempotency keys (`image_id`, `sha256`) and consumer-side dedup checks.
-- [Risk] Splitting by directories may break old script paths -> Mitigation: keep root compatibility wrappers that delegate to canonical `data-logger/service` and `data-processor/service` entrypoints.
+- [Risk] Splitting by directories may break old script paths -> Mitigation: migrate all invocations to canonical module entrypoints and remove wrapper indirection.
 - [Risk] Runtime behavior divergence between environments -> Mitigation: enforce compose and CI validation (`docker compose config`, unit/integration contract tests).
 
 ## Migration Plan
 
-1. Create/confirm canonical dual top-level directories and entrypoints (`data-logger/service`, `data-processor/service`).
+1. Create/confirm canonical dual top-level directories and entrypoints (`logger_service/service`, `processor_service/service`).
 2. Introduce `contracts` package for versioned NATS task schema.
 3. Update logger publish path to new contract while persisting migration telemetry.
 4. Update processor consume path to support both old and new contract versions.
@@ -64,7 +64,7 @@ The codebase has already separated logger and processor entry logic, but there a
 6. Remove path-coupled mode and shared-volume dependency as required coupling once cutover criteria are met.
 
 Rollback strategy:
-- Re-enable old payload format publish/consume compatibility and retain wrapper entrypoints.
+- Re-enable old payload format publish/consume compatibility and run canonical module entrypoints directly.
 - Keep previous compose volume mapping only as temporary rollback path (not target steady state).
 
 ## Open Questions

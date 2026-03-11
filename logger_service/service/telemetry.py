@@ -6,12 +6,13 @@ import logging
 import os
 import sys
 import threading
-from typing import Dict
+from typing import Any
 
 from opentelemetry import trace
+from opentelemetry._logs import set_logger_provider
 from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler, set_logger_provider
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -19,9 +20,9 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import NoOpTracerProvider
 
 
-_INITIALIZED = False
-_HOOKS_INSTALLED = False
-_LOGURU_BRIDGED = False
+_initialized = False
+_hooks_installed = False
+_loguru_bridged = False
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -31,10 +32,10 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-def _parse_headers(raw: str | None) -> Dict[str, str]:
+def _parse_headers(raw: str | None) -> dict[str, str]:
     if not raw:
         return {}
-    headers: Dict[str, str] = {}
+    headers: dict[str, str] = {}
     for item in raw.split(","):
         if "=" not in item:
             continue
@@ -47,10 +48,10 @@ def _parse_headers(raw: str | None) -> Dict[str, str]:
 
 
 def init_telemetry() -> None:
-    global _INITIALIZED
-    if _INITIALIZED:
+    global _initialized
+    if _initialized:
         return
-    _INITIALIZED = True
+    _initialized = True
 
     if not _env_bool("OTEL_ENABLED", False):
         logging.getLogger(__name__).info("OTel disabled by OTEL_ENABLED")
@@ -62,18 +63,24 @@ def init_telemetry() -> None:
     service_name = os.getenv("OTEL_SERVICE_NAME", "data-assistant-logger")
     resource = Resource.create({"service.name": service_name})
 
-    span_exporter = OTLPSpanExporter(endpoint=endpoint, insecure=insecure, headers=headers)
+    span_exporter = OTLPSpanExporter(
+        endpoint=endpoint, insecure=insecure, headers=headers
+    )
     tracer_provider = TracerProvider(resource=resource)
     tracer_provider.add_span_processor(BatchSpanProcessor(span_exporter))
     trace.set_tracer_provider(tracer_provider)
 
-    log_exporter = OTLPLogExporter(endpoint=endpoint, insecure=insecure, headers=headers)
+    log_exporter = OTLPLogExporter(
+        endpoint=endpoint, insecure=insecure, headers=headers
+    )
     logger_provider = LoggerProvider(resource=resource)
     logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
     set_logger_provider(logger_provider)
 
     root_logger = logging.getLogger()
-    root_logger.addHandler(LoggingHandler(level=logging.INFO, logger_provider=logger_provider))
+    root_logger.addHandler(
+        LoggingHandler(level=logging.INFO, logger_provider=logger_provider)
+    )
     if root_logger.level > logging.INFO:
         root_logger.setLevel(logging.INFO)
     _bridge_loguru_to_logging()
@@ -86,18 +93,21 @@ def init_telemetry() -> None:
     )
 
     def _shutdown() -> None:
-        if not isinstance(trace.get_tracer_provider(), NoOpTracerProvider):
-            trace.get_tracer_provider().shutdown()
+        provider = trace.get_tracer_provider()
+        if not isinstance(provider, NoOpTracerProvider):
+            shutdown = getattr(provider, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
         logger_provider.shutdown()
 
     atexit.register(_shutdown)
 
 
 def install_error_hooks() -> None:
-    global _HOOKS_INSTALLED
-    if _HOOKS_INSTALLED:
+    global _hooks_installed
+    if _hooks_installed:
         return
-    _HOOKS_INSTALLED = True
+    _hooks_installed = True
 
     python_old_hook = sys.excepthook
     threading_old_hook = threading.excepthook
@@ -107,7 +117,7 @@ def install_error_hooks() -> None:
         if issubclass(exc_type, KeyboardInterrupt):
             python_old_hook(exc_type, exc, tb)
             return
-        logger.error("Unhandled exception", exc_info=(exc_type, exc, tb))
+        logger.error("Unhandled exception: %s", exc)
         python_old_hook(exc_type, exc, tb)
 
     def _threading_excepthook(args: threading.ExceptHookArgs) -> None:
@@ -117,7 +127,6 @@ def install_error_hooks() -> None:
         logger.error(
             "Unhandled thread exception in %s",
             args.thread.name if args.thread else "unknown-thread",
-            exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
         )
         threading_old_hook(args)
 
@@ -131,10 +140,13 @@ def install_error_hooks() -> None:
 
     loop_old_handler = loop.get_exception_handler()
 
-    def _asyncio_exception_handler(loop_obj: asyncio.AbstractEventLoop, context: dict) -> None:
+    def _asyncio_exception_handler(
+        loop_obj: asyncio.AbstractEventLoop,
+        context: dict[str, Any],
+    ) -> None:
         exc = context.get("exception")
         message = context.get("message", "Unhandled asyncio exception")
-        logger.error("Asyncio exception: %s", message, exc_info=exc)
+        logger.error("Asyncio exception: %s", message)
         if loop_old_handler:
             loop_old_handler(loop_obj, context)
         else:
@@ -144,17 +156,17 @@ def install_error_hooks() -> None:
 
 
 def _bridge_loguru_to_logging() -> None:
-    global _LOGURU_BRIDGED
-    if _LOGURU_BRIDGED:
+    global _loguru_bridged
+    if _loguru_bridged:
         return
     try:
         from loguru import logger as loguru_logger
     except Exception:
         return
 
-    def _sink(message: str) -> None:
+    def _sink(message: Any) -> None:
         record = message.record
         logging.getLogger(record["name"]).log(record["level"].no, record["message"])
 
     loguru_logger.add(_sink, level="INFO")
-    _LOGURU_BRIDGED = True
+    _loguru_bridged = True

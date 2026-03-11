@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from data_logger.service.napcat.event import ImageSegment, OneBotEvent, parse_event
+from logger_service.service.napcat.event import ImageSegment, OneBotEvent, parse_event
 
 
 # ---------------------------------------------------------------------------

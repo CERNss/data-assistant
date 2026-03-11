@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from data_logger.service.napcat.config import NapCatConfig
-from data_logger.service.napcat.handler import (
+from logger_service.service.napcat.config import NapCatConfig
+from logger_service.service.napcat.handler import (
     is_probably_expired_url_error,
     refresh_image_url,
 )
@@ -57,7 +57,7 @@ class TestExpiredUrlHeuristic(unittest.TestCase):
 class TestRefreshImageUrl(unittest.IsolatedAsyncioTestCase):
     async def test_returns_connection_error_when_no_action_channel(self) -> None:
         with patch(
-            "data_logger.service.napcat.handler.get_action_client", return_value=None
+            "logger_service.service.napcat.handler.get_action_client", return_value=None
         ):
             result = await refresh_image_url("abc.image", _cfg(), message_id="1")
 
@@ -82,7 +82,8 @@ class TestRefreshImageUrl(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "data_logger.service.napcat.handler.get_action_client", return_value=client
+            "logger_service.service.napcat.handler.get_action_client",
+            return_value=client,
         ):
             result = await refresh_image_url("abc.image", _cfg(), message_id="2")
 
@@ -116,7 +117,8 @@ class TestRefreshImageUrl(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "data_logger.service.napcat.handler.get_action_client", return_value=client
+            "logger_service.service.napcat.handler.get_action_client",
+            return_value=client,
         ):
             result = await refresh_image_url("def.image", _cfg(), message_id="3")
 
@@ -135,7 +137,8 @@ class TestRefreshImageUrl(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "data_logger.service.napcat.handler.get_action_client", return_value=client
+            "logger_service.service.napcat.handler.get_action_client",
+            return_value=client,
         ):
             result = await refresh_image_url("xyz.image", _cfg(), message_id="4")
 
