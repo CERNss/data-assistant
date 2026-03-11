@@ -78,7 +78,7 @@ def init_telemetry() -> None:
         return
     _initialized = True
 
-    service_name = _setup_json_stdout_logging("data-assistant-logger")
+    service_name = _setup_json_stdout_logging("data-assistant-processor")
 
     if not _env_bool("OTEL_ENABLED", False):
         loguru_logger.info("OTel disabled by OTEL_ENABLED")

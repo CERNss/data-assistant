@@ -74,25 +74,26 @@ python3 -m logger_service.service.main
 
 ## Docker Compose Topology
 
-Compose includes 5 services:
+Compose includes 6 services:
 
 - `nats`
 - `db` (PostgreSQL)
 - `pgadmin`
+- `fluent-bit`
 - `processor`
 - `logger`
 
 Start in recommended order:
 
 ```bash
-docker compose up -d nats db processor
+docker compose up -d nats db fluent-bit processor
 docker compose up -d logger
 ```
 
 View logs:
 
 ```bash
-docker compose logs -f logger processor nats db pgadmin
+docker compose logs -f logger processor fluent-bit nats db pgadmin
 ```
 
 Stop:
@@ -154,6 +155,30 @@ python3 -m compileall .
 
 ## Observability
 
-- Enable OTel: `OTEL_ENABLED=true`
-- Configure endpoint: `OTEL_EXPORTER_OTLP_ENDPOINT=http://<collector>:4317`
-- Service identity: `OTEL_SERVICE_NAME`
+- Logs pipeline:
+  - `Python logging/loguru -> stdout(JSON) -> Docker fluentd driver -> Fluent Bit -> OTLP logs endpoint`
+- Traces pipeline:
+  - `Python app -> OpenTelemetry SDK -> OTLP trace endpoint`
+- Metrics pipeline:
+  - `Python app -> OpenTelemetry SDK -> OTLP metrics endpoint`
+
+Core env vars for logger/processor:
+
+```env
+OTEL_ENABLED=true
+OTEL_SERVICE_NAME=data-assistant-logger
+OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4317
+OTEL_EXPORTER_OTLP_INSECURE=true
+OTEL_EXPORTER_OTLP_HEADERS=
+OTEL_METRIC_EXPORT_INTERVAL_MS=60000
+```
+
+Fluent Bit forwarding env vars (compose service):
+
+```env
+FB_OTLP_HOST=host.docker.internal
+FB_OTLP_PORT=4318
+FB_OTLP_LOGS_URI=/v1/logs
+FB_OTLP_TLS=Off
+FB_OTLP_TLS_VERIFY=Off
+```

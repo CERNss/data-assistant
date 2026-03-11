@@ -2,13 +2,58 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 from loguru import logger
 
+try:
+    from opentelemetry import metrics, trace
+except ImportError:
+    metrics = None
+    trace = None
+
 from contracts.chat_image_task import TASK_VERSION, TaskV2, encode_task
 
 from .config import ChatImageConfig
+
+
+class _NoOpTracer:
+    def start_as_current_span(
+        self, _name: str, attributes: dict[str, Any] | None = None
+    ):
+        from contextlib import nullcontext
+
+        return nullcontext()
+
+
+TRACER = (
+    trace.get_tracer("data_assistant.logger.chat_image.nats_publisher")
+    if trace is not None
+    else _NoOpTracer()
+)
+METER = (
+    metrics.get_meter("data_assistant.logger.chat_image.nats_publisher")
+    if metrics is not None
+    else None
+)
+NATS_PUBLISH_COUNTER = (
+    METER.create_counter(
+        "logger_nats_publish_total",
+        description="Total NATS publish attempts by outcome",
+    )
+    if METER is not None
+    else None
+)
+NATS_PUBLISH_LATENCY_MS = (
+    METER.create_histogram(
+        "logger_nats_publish_latency_ms",
+        unit="ms",
+        description="NATS publish latency in milliseconds",
+    )
+    if METER is not None
+    else None
+)
 
 
 _nats_client: Any | None = None
@@ -39,22 +84,47 @@ async def publish_tagger_task_with_result(
     *,
     payload: dict[str, Any],
 ) -> tuple[bool, str | None]:
-    if not config.nats.enabled:
-        return False, "nats_disabled"
-    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    try:
-        client = await _get_or_connect_nats(config)
-        await client.publish(config.nats.subject, data)
-        await client.flush(timeout=config.nats.publish_timeout_sec)
-        return True, None
-    except Exception as exc:
-        logger.warning(
-            "Failed to publish tagger task to NATS: subject={} image_id={} error={}",
-            config.nats.subject,
-            payload.get("image_id"),
-            exc,
-        )
-        return False, str(exc)
+    image_id = str(payload.get("image_id") or "")
+    start_time = time.perf_counter()
+
+    with TRACER.start_as_current_span(
+        "chat_image.nats_publish",
+        attributes={
+            "chat.image.nats.subject": config.nats.subject,
+            "chat.image.id": image_id,
+        },
+    ):
+        if not config.nats.enabled:
+            _record_publish_metrics(
+                outcome="disabled",
+                subject=config.nats.subject,
+                started_at=start_time,
+            )
+            return False, "nats_disabled"
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        try:
+            client = await _get_or_connect_nats(config)
+            await client.publish(config.nats.subject, data)
+            await client.flush(timeout=config.nats.publish_timeout_sec)
+            _record_publish_metrics(
+                outcome="published",
+                subject=config.nats.subject,
+                started_at=start_time,
+            )
+            return True, None
+        except Exception as exc:
+            logger.warning(
+                "Failed to publish tagger task to NATS: subject={} image_id={} error={}",
+                config.nats.subject,
+                payload.get("image_id"),
+                exc,
+            )
+            _record_publish_metrics(
+                outcome="failed",
+                subject=config.nats.subject,
+                started_at=start_time,
+            )
+            return False, str(exc)
 
 
 async def close_nats_publisher() -> None:
@@ -97,3 +167,15 @@ async def _get_or_connect_nats(config: ChatImageConfig) -> Any:
             config.nats.subject,
         )
         return _nats_client
+
+
+def _record_publish_metrics(*, outcome: str, subject: str, started_at: float) -> None:
+    attributes = {
+        "outcome": outcome,
+        "subject": subject,
+    }
+    if NATS_PUBLISH_COUNTER is not None:
+        NATS_PUBLISH_COUNTER.add(1, attributes)
+    if NATS_PUBLISH_LATENCY_MS is not None:
+        latency_ms = max(0.0, (time.perf_counter() - started_at) * 1000.0)
+        NATS_PUBLISH_LATENCY_MS.record(latency_ms, attributes)

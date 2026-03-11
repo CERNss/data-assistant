@@ -36,9 +36,9 @@ Python requirement: `>=3.10` (Dockerfiles use `python:3.11-slim`).
   - `cp .env.example .env`
   - set `CHAT_IMAGE_TAGGER_TOOL_ROOT_HOST` in `.env` (host path to Eagle_AItagger_byWD1.4)
 - Start (recommended order):
-  - `docker compose up -d nats processor`
+  - `docker compose up -d nats fluent-bit processor`
   - `docker compose up -d logger`
-- Logs: `docker compose logs -f logger processor nats`
+- Logs: `docker compose logs -f logger processor fluent-bit nats`
 - Stop: `docker compose down`
 
 ### Tests
@@ -100,7 +100,8 @@ There is no repo-pinned linter/formatter config (no `ruff.toml`, `pyproject` too
 
 - Use Loguru-style `{}` formatting in service code:
   - `logger.info("Saved chat image: path={} size={}", path, size)`
-- In non-NoneBot utilities, standard `logging` may use `%s` formatting (see `logger_service/service/telemetry.py`).
+- Logger/processor runtime logs are emitted as JSON to stdout and forwarded by Fluent Bit.
+- Traces and metrics are exported via in-process OpenTelemetry SDK OTLP exporters.
 - Wrap meaningful operations with OpenTelemetry spans when appropriate (pattern in `logger_service/service/napcat/pipeline.py`).
 
 ### Error Handling
@@ -131,6 +132,7 @@ There is no repo-pinned linter/formatter config (no `ruff.toml`, `pyproject` too
 ## Repo-Specific Gotchas
 
 - `docker-compose.yml` mounts a shared `/app/data` volume for logger + processor; paths must match.
+- Fluent Bit config files live at `fluent-bit/fluent-bit.conf` and `fluent-bit/parsers.conf`; compose mounts both read-only.
 - Docker build context ignores `tests/` and `openspec/` (`.dockerignore`), so containers cannot run tests.
 - Secrets live in `.env`; never commit real QQ credentials or tokens.
 - NATS publishing is best-effort; when no worker is subscribed, messages can be lost (core pub/sub semantics).

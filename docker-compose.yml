@@ -38,6 +38,32 @@ services:
     networks:
       - data-assistant-net
 
+  fluent-bit:
+    image: fluent/fluent-bit:latest
+    env_file:
+      - .env
+    volumes:
+      - ./fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+    command: ["/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/fluent-bit.conf"]
+    environment:
+      FB_OTLP_HOST: "${FB_OTLP_HOST:-host.docker.internal}"
+      FB_OTLP_PORT: "${FB_OTLP_PORT:-4318}"
+      FB_OTLP_LOGS_URI: "${FB_OTLP_LOGS_URI:-/v1/logs}"
+      FB_OTLP_TLS: "${FB_OTLP_TLS:-Off}"
+      FB_OTLP_TLS_VERIFY: "${FB_OTLP_TLS_VERIFY:-Off}"
+    healthcheck:
+      test: ["CMD", "/fluent-bit/bin/fluent-bit", "--version"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - data-assistant-net
+
   processor:
     build:
       context: .
@@ -54,12 +80,23 @@ services:
       CHAT_IMAGE_TAGGER_QUEUE_FILE: "/app/data/chat_image_tagger_queue.json"
       CHAT_IMAGE_TAGGER_RUN_ROOT: "/app/data/chat_image_tagger_runs"
       CHAT_IMAGE_TAGGER_AUDIT_LOG_FILE: "/app/data/group_image_tags.jsonl"
+      OTEL_ENABLED: "true"
       OTEL_SERVICE_NAME: "data-assistant-processor"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://host.docker.internal:4317"
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
     volumes:
       - chat-data:/app/data
       - ${CHAT_IMAGE_TAGGER_TOOL_ROOT_HOST:?set CHAT_IMAGE_TAGGER_TOOL_ROOT_HOST in .env}:/opt/tagger:ro
     depends_on:
-      - nats
+      fluent-bit:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: "fluent-bit:24224"
+        tag: "docker.processor-service"
     restart: unless-stopped
     networks:
       - data-assistant-net
@@ -79,15 +116,27 @@ services:
       CHAT_IMAGE_TAGGER_ENABLED: "false"
       CHAT_IMAGE_SAVE_DIR: "/app/data/chat_images"
       GROUP_IMAGE_SAVE_DIR: "/app/data/chat_images"
+      OTEL_ENABLED: "true"
       OTEL_SERVICE_NAME: "data-assistant-logger"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://host.docker.internal:4317"
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
       POSTGRES_DSN: "postgresql://admin:password@db:5432/app_db"
     ports:
       - "3001:3001"
     volumes:
       - chat-data:/app/data
     depends_on:
-      - nats
-      - db
+      fluent-bit:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      db:
+        condition: service_started
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: "fluent-bit:24224"
+        tag: "docker.logger-service"
     restart: unless-stopped
     networks:
       - data-assistant-net

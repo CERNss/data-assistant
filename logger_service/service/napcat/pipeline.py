@@ -4,15 +4,68 @@ import hashlib
 import importlib
 import io
 import json
+import time
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
 
+try:
+    from opentelemetry import metrics, trace
+except ImportError:
+    metrics = None
+    trace = None
+
 from .config import NapCatConfig, load_napcat_config
 from .event import ImageSegment, OneBotEvent
 from .handler import RefreshResult, is_probably_expired_url_error, refresh_image_url
+
+
+class _NoOpTracer:
+    def start_as_current_span(
+        self, _name: str, attributes: dict[str, Any] | None = None
+    ):
+        from contextlib import nullcontext
+
+        return nullcontext()
+
+
+TRACER = (
+    trace.get_tracer("data_assistant.logger.napcat.pipeline")
+    if trace is not None
+    else _NoOpTracer()
+)
+METER = (
+    metrics.get_meter("data_assistant.logger.napcat.pipeline")
+    if metrics is not None
+    else None
+)
+EVENT_COUNTER = (
+    METER.create_counter(
+        "logger_events_total",
+        description="Total logger events by persist outcome",
+    )
+    if METER is not None
+    else None
+)
+IMAGE_COUNTER = (
+    METER.create_counter(
+        "logger_images_total",
+        description="Total logger image processing outcomes",
+    )
+    if METER is not None
+    else None
+)
+IMAGE_PROCESS_DURATION_MS = (
+    METER.create_histogram(
+        "logger_image_process_duration_ms",
+        unit="ms",
+        description="Image process duration in milliseconds",
+    )
+    if METER is not None
+    else None
+)
 
 
 def _attempts_from_error(exc: Exception, default_attempts: int) -> int:
@@ -69,6 +122,32 @@ def _derive_stream_state(image: ImageSegment) -> tuple[str, str | None, str | No
     return transfer_mode, stream_phase, stream_data_type
 
 
+def _record_event_metric(*, outcome: str, post_type: str) -> None:
+    if EVENT_COUNTER is None:
+        return
+    EVENT_COUNTER.add(
+        1,
+        {
+            "outcome": outcome,
+            "post_type": post_type,
+        },
+    )
+
+
+def _record_image_metrics(
+    *, outcome: str, transfer_mode: str, started_at: float
+) -> None:
+    attributes = {
+        "outcome": outcome,
+        "transfer_mode": transfer_mode,
+    }
+    if IMAGE_COUNTER is not None:
+        IMAGE_COUNTER.add(1, attributes)
+    if IMAGE_PROCESS_DURATION_MS is not None:
+        latency_ms = max(0.0, (time.perf_counter() - started_at) * 1000.0)
+        IMAGE_PROCESS_DURATION_MS.record(latency_ms, attributes)
+
+
 async def persist_event(event: OneBotEvent) -> None:
     from ..chat_image.config import load_chat_image_config
     from ..persistence.repository import insert_event
@@ -77,41 +156,58 @@ async def persist_event(event: OneBotEvent) -> None:
     napcat_config = load_napcat_config()
     event_time = datetime.fromtimestamp(event.time, tz=UTC)
 
-    try:
-        event_id = await insert_event(
-            post_type=event.post_type,
-            message_type=event.message_type,
-            user_id=event.user_id,
-            group_id=event.group_id,
-            group_name=event.group_name,
-            self_id=event.self_id,
-            message_id=event.message_id,
-            event_time=event_time,
-            raw_message=event.raw_message,
-            raw=event.raw,
-        )
-    except Exception as exc:
-        logger.error(
-            "Failed to insert event to DB: post_type={} message_id={} error={}",
-            event.post_type,
-            event.message_id,
-            exc,
-        )
-        return
+    with TRACER.start_as_current_span(
+        "logger.persist_event",
+        attributes={
+            "post_type": event.post_type,
+            "message_type": event.message_type or "",
+        },
+    ):
+        try:
+            event_id = await insert_event(
+                post_type=event.post_type,
+                message_type=event.message_type,
+                user_id=event.user_id,
+                group_id=event.group_id,
+                group_name=event.group_name,
+                self_id=event.self_id,
+                message_id=event.message_id,
+                event_time=event_time,
+                raw_message=event.raw_message,
+                raw=event.raw,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to insert event to DB: post_type={} message_id={} error={}",
+                event.post_type,
+                event.message_id,
+                exc,
+            )
+            _record_event_metric(outcome="db_failed", post_type=event.post_type)
+            return
 
-    if event.post_type not in {"message", "message_sent"}:
-        return
-    if not event.images:
-        return
+        _record_event_metric(outcome="persisted", post_type=event.post_type)
 
-    for image in event.images:
-        await _process_image(
-            event_id=event_id,
-            event=event,
-            image=image,
-            chat_config=chat_config,
-            napcat_config=napcat_config,
-        )
+        if event.post_type not in {"message", "message_sent"}:
+            return
+        if not event.images:
+            return
+
+        for image in event.images:
+            with TRACER.start_as_current_span(
+                "logger.process_image",
+                attributes={
+                    "event_id": event_id,
+                    "seq": image.seq,
+                },
+            ):
+                await _process_image(
+                    event_id=event_id,
+                    event=event,
+                    image=image,
+                    chat_config=chat_config,
+                    napcat_config=napcat_config,
+                )
 
 
 async def _process_image(
@@ -144,6 +240,7 @@ async def _process_image(
     message_id = event.message_id or "unknown"
     original_url = image.url_decoded or image.url_raw
     transfer_mode, stream_phase, stream_data_type = _derive_stream_state(image)
+    process_started_at = time.perf_counter()
 
     try:
         image_id = await insert_image(
@@ -162,6 +259,11 @@ async def _process_image(
             event_id,
             image.seq,
             exc,
+        )
+        _record_image_metrics(
+            outcome="insert_failed",
+            transfer_mode=transfer_mode,
+            started_at=process_started_at,
         )
         return
 
@@ -205,6 +307,11 @@ async def _process_image(
                 if refresh_result is not None
                 else None,
             },
+        )
+        _record_image_metrics(
+            outcome="failed",
+            transfer_mode=transfer_mode,
+            started_at=process_started_at,
         )
 
     if not original_url:
@@ -376,6 +483,11 @@ async def _process_image(
                 else None,
             },
         )
+        _record_image_metrics(
+            outcome="duplicate",
+            transfer_mode=transfer_mode,
+            started_at=process_started_at,
+        )
         return
 
     try:
@@ -493,3 +605,9 @@ async def _process_image(
             image_id,
             db_exc,
         )
+
+    _record_image_metrics(
+        outcome="saved",
+        transfer_mode=transfer_mode,
+        started_at=process_started_at,
+    )

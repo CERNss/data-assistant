@@ -4,6 +4,7 @@ import asyncio
 import json
 import shutil
 import subprocess
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,11 +16,13 @@ from .audit import append_json_line
 from .config import ChatImageConfig
 
 try:
-    from opentelemetry import trace
+    from opentelemetry import metrics, trace
 
-    tracer = trace.get_tracer("data_assistant.plugins.chat_image.tagger_pipeline")
+    tracer = trace.get_tracer("data_assistant.processor.chat_image.tagger_pipeline")
+    meter = metrics.get_meter("data_assistant.processor.chat_image.tagger_pipeline")
 except ImportError:
-    # Fallback for test environments without opentelemetry
+    meter = None
+
     class _NoOpTracer:
         def start_as_current_span(
             self, name: str, attributes: dict[str, Any] | None = None
@@ -29,6 +32,49 @@ except ImportError:
             return nullcontext()
 
     tracer = _NoOpTracer()
+
+QUEUE_ENQUEUE_COUNTER = (
+    meter.create_counter(
+        "processor_queue_enqueued_total",
+        description="Queue enqueue attempts by outcome",
+    )
+    if meter is not None
+    else None
+)
+QUEUE_DEPTH_HIST = (
+    meter.create_histogram(
+        "processor_queue_depth",
+        description="Queue depth samples",
+    )
+    if meter is not None
+    else None
+)
+TAGGER_BATCH_COUNTER = (
+    meter.create_counter(
+        "processor_tagger_batches_total",
+        description="Tagger batch outcomes",
+    )
+    if meter is not None
+    else None
+)
+TAGGER_ITEM_COUNTER = (
+    meter.create_counter(
+        "processor_tagger_items_total",
+        description="Tagger item outcomes",
+    )
+    if meter is not None
+    else None
+)
+TAGGER_BATCH_LATENCY_MS = (
+    meter.create_histogram(
+        "processor_tagger_batch_latency_ms",
+        unit="ms",
+        description="Tagger batch latency in milliseconds",
+    )
+    if meter is not None
+    else None
+)
+
 QUEUE_LOCK = asyncio.Lock()
 AUTO_RUN_LOCK = asyncio.Lock()
 auto_run_task: asyncio.Task[None] | None = None
@@ -275,9 +321,11 @@ async def enqueue_tagger_task_payload(
     async with QUEUE_LOCK:
         queue_items = _load_queue(tagger.queue_file)
         if any(item.get("image_path") == queued_image_path for item in queue_items):
+            _record_queue_metrics(outcome="duplicate", depth=len(queue_items))
             return
         queue_items.append(queue_item)
         _save_queue(tagger.queue_file, queue_items)
+        _record_queue_metrics(outcome="enqueued", depth=len(queue_items))
 
     logger.info("Queued image for tagging: path={}", queued_image_path)
     if tagger.auto_run:
@@ -308,6 +356,8 @@ async def run_tagger_once(
     summary["picked"] = len(batch_items)
 
     runner_impl = runner or _run_external_tagger_batch
+    batch_started = time.perf_counter()
+
     with tracer.start_as_current_span(
         "chat_image.tagger.run_batch",
         attributes={
@@ -398,6 +448,11 @@ async def run_tagger_once(
         async with QUEUE_LOCK:
             queue_items = _load_queue(tagger.queue_file)
             _save_queue(tagger.queue_file, requeue_items + queue_items)
+            _record_queue_metrics(
+                outcome="requeued", depth=len(requeue_items + queue_items)
+            )
+
+    _record_batch_metrics(summary=summary, started_at=batch_started)
 
     return summary
 
@@ -435,3 +490,33 @@ async def _auto_run_worker(config: ChatImageConfig) -> None:
             summary["failed"],
             summary["requeued"],
         )
+
+
+def _record_queue_metrics(*, outcome: str, depth: int) -> None:
+    attributes = {"outcome": outcome}
+    if QUEUE_ENQUEUE_COUNTER is not None:
+        QUEUE_ENQUEUE_COUNTER.add(1, attributes)
+    if QUEUE_DEPTH_HIST is not None:
+        QUEUE_DEPTH_HIST.record(max(0, depth), attributes)
+
+
+def _record_batch_metrics(*, summary: dict[str, int], started_at: float) -> None:
+    picked = max(0, summary.get("picked", 0))
+    success = max(0, summary.get("success", 0))
+    failed = max(0, summary.get("failed", 0))
+    requeued = max(0, summary.get("requeued", 0))
+
+    if TAGGER_BATCH_COUNTER is not None:
+        TAGGER_BATCH_COUNTER.add(1, {"outcome": "completed"})
+    if TAGGER_ITEM_COUNTER is not None:
+        if picked:
+            TAGGER_ITEM_COUNTER.add(picked, {"outcome": "picked"})
+        if success:
+            TAGGER_ITEM_COUNTER.add(success, {"outcome": "success"})
+        if failed:
+            TAGGER_ITEM_COUNTER.add(failed, {"outcome": "failed"})
+        if requeued:
+            TAGGER_ITEM_COUNTER.add(requeued, {"outcome": "requeued"})
+    if TAGGER_BATCH_LATENCY_MS is not None:
+        latency_ms = max(0.0, (time.perf_counter() - started_at) * 1000.0)
+        TAGGER_BATCH_LATENCY_MS.record(latency_ms, {"outcome": "completed"})

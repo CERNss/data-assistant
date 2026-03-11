@@ -3,10 +3,17 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import time
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
+
+try:
+    from opentelemetry import metrics, trace
+except ImportError:
+    metrics = None
+    trace = None
 
 from contracts.chat_image_task import TaskV2, decode_task
 
@@ -19,38 +26,111 @@ from .tagger_pipeline import (
 )
 
 
+class _NoOpTracer:
+    def start_as_current_span(
+        self, _name: str, attributes: dict[str, Any] | None = None
+    ):
+        from contextlib import nullcontext
+
+        return nullcontext()
+
+
+TRACER = (
+    trace.get_tracer("data_assistant.processor.chat_image.tagger_worker")
+    if trace is not None
+    else _NoOpTracer()
+)
+METER = (
+    metrics.get_meter("data_assistant.processor.chat_image.tagger_worker")
+    if metrics is not None
+    else None
+)
+MESSAGE_COUNTER = (
+    METER.create_counter(
+        "processor_nats_messages_total",
+        description="NATS messages handled by outcome",
+    )
+    if METER is not None
+    else None
+)
+MESSAGE_LATENCY_MS = (
+    METER.create_histogram(
+        "processor_nats_message_handle_latency_ms",
+        unit="ms",
+        description="NATS message handling latency in milliseconds",
+    )
+    if METER is not None
+    else None
+)
+
+
 async def handle_nats_message(
     *, config: ChatImageConfig, data: bytes, subject: str
 ) -> None:
-    try:
-        task = decode_task(data)
-    except Exception as exc:
-        logger.warning("Ignore invalid NATS payload on {}: {}", subject, exc)
-        return
+    started_at = time.perf_counter()
+    outcome = "failed"
+    image_id_attr = ""
 
-    image_path = _resolve_task_image_path(config, task)
-    if image_path is None:
-        logger.warning(
-            "Ignore unresolved NATS payload on {}: image_id={} sha256={}",
-            subject,
-            task.image_id,
-            task.sha256,
-        )
-        return
+    with TRACER.start_as_current_span(
+        "processor.handle_nats_message",
+        attributes={
+            "subject": subject,
+            "payload_bytes": len(data),
+        },
+    ):
+        try:
+            task = decode_task(data)
+        except Exception as exc:
+            logger.warning("Ignore invalid NATS payload on {}: {}", subject, exc)
+            outcome = "invalid_payload"
+            _record_message_metrics(
+                outcome=outcome,
+                subject=subject,
+                started_at=started_at,
+                image_id=image_id_attr,
+            )
+            return
 
-    payload = {
-        "image_path": image_path,
-        "context": task.context,
-    }
+        image_id_attr = str(task.image_id)
+        image_path = _resolve_task_image_path(config, task)
+        if image_path is None:
+            logger.warning(
+                "Ignore unresolved NATS payload on {}: image_id={} sha256={}",
+                subject,
+                task.image_id,
+                task.sha256,
+            )
+            outcome = "unresolved_path"
+            _record_message_metrics(
+                outcome=outcome,
+                subject=subject,
+                started_at=started_at,
+                image_id=image_id_attr,
+            )
+            return
 
-    try:
-        await enqueue_tagger_task_payload(config=config, payload=payload)
-        if config.tagger.auto_run:
-            await ensure_tagger_auto_run(config)
-        else:
-            await run_tagger_once(config)
-    except Exception as exc:
-        logger.warning("Failed to process NATS payload on {}: {}", subject, exc)
+        payload = {
+            "image_path": image_path,
+            "context": task.context,
+        }
+
+        try:
+            await enqueue_tagger_task_payload(config=config, payload=payload)
+            if config.tagger.auto_run:
+                await ensure_tagger_auto_run(config)
+            else:
+                await run_tagger_once(config)
+            outcome = "enqueued"
+        except Exception as exc:
+            logger.warning("Failed to process NATS payload on {}: {}", subject, exc)
+            outcome = "failed"
+
+    _record_message_metrics(
+        outcome=outcome,
+        subject=subject,
+        started_at=started_at,
+        image_id=image_id_attr,
+    )
 
 
 def _resolve_task_image_path(config: ChatImageConfig, task: TaskV2) -> str | None:
@@ -113,6 +193,28 @@ def _resolve_task_image_path(config: ChatImageConfig, task: TaskV2) -> str | Non
 
 def _file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _record_message_metrics(
+    *,
+    outcome: str,
+    subject: str,
+    started_at: float,
+    image_id: str,
+) -> None:
+    attributes = {
+        "outcome": outcome,
+        "subject": subject,
+    }
+    if image_id:
+        attributes["has_image_id"] = "true"
+    else:
+        attributes["has_image_id"] = "false"
+    if MESSAGE_COUNTER is not None:
+        MESSAGE_COUNTER.add(1, attributes)
+    if MESSAGE_LATENCY_MS is not None:
+        latency_ms = max(0.0, (time.perf_counter() - started_at) * 1000.0)
+        MESSAGE_LATENCY_MS.record(latency_ms, attributes)
 
 
 async def _run(process_backlog: bool) -> int:
