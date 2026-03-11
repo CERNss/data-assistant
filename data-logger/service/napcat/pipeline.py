@@ -464,7 +464,6 @@ async def _process_image(
         source_url=active_url,
         original_url=original_url,
         context=tag_context,
-        image_path=save_path,
     )
     published, publish_error = await publish_tagger_task_with_result(
         chat_config,

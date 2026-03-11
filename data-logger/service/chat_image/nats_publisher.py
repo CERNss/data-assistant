@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -23,7 +22,6 @@ def build_tagger_task_payload(
     source_url: str,
     original_url: str | None,
     context: dict[str, Any],
-    image_path: Path | None = None,
 ) -> dict[str, Any]:
     task = TaskV2(
         version=TASK_VERSION,
@@ -32,7 +30,6 @@ def build_tagger_task_payload(
         source_url=source_url,
         original_url=original_url or source_url,
         context=context,
-        image_path=str(image_path.resolve()) if image_path is not None else None,
     )
     return json.loads(encode_task(task).decode("utf-8"))
 
