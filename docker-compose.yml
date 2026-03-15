@@ -92,11 +92,18 @@ services:
         condition: service_healthy
       nats:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     logging:
       driver: fluentd
       options:
         fluentd-address: "fluent-bit:24224"
         tag: "docker.processor-service"
+        fluentd-async: "true"
+        fluentd-buffer-limit: "8388608"
     restart: unless-stopped
     networks:
       - data-assistant-net
@@ -132,11 +139,18 @@ services:
         condition: service_started
       db:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3001/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     logging:
       driver: fluentd
       options:
         fluentd-address: "fluent-bit:24224"
         tag: "docker.logger-service"
+        fluentd-async: "true"
+        fluentd-buffer-limit: "8388608"
     restart: unless-stopped
     networks:
       - data-assistant-net
