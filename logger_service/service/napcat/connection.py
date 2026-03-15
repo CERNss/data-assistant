@@ -97,11 +97,16 @@ def _set_action_client(client: OneBotActionClient | None) -> None:
         old.close("NapCat action channel replaced by newer connection")
 
 
+async def _health_handler(_request: aiohttp.web.Request) -> aiohttp.web.Response:
+    return aiohttp.web.json_response({"status": "ok"})
+
+
 async def run_server(
     config: NapCatConfig,
     on_event: Callable[[dict[str, Any]], Awaitable[None]],
 ) -> None:
     app = aiohttp.web.Application()
+    app.router.add_route("GET", "/health", _health_handler)
     app.router.add_route("GET", config.ws_path, _make_ws_handler(config, on_event))
     runner = aiohttp.web.AppRunner(app)
     await runner.setup()
