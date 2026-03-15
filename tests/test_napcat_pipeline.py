@@ -23,7 +23,7 @@ from logger_service.service.napcat.pipeline import _derive_stream_state, _proces
 def _napcat_config() -> NapCatConfig:
     return NapCatConfig(
         ws_host="0.0.0.0",
-        ws_port=3001,
+        ws_port=8082,
         ws_path="/onebot/v11/ws",
         token="",
         action_timeout_sec=8.0,

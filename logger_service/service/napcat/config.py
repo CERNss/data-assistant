@@ -57,7 +57,7 @@ class NapCatConfig:
 def load_napcat_config() -> NapCatConfig:
     return NapCatConfig(
         ws_host=os.getenv("NAPCAT_WS_HOST", "0.0.0.0").strip() or "0.0.0.0",
-        ws_port=_env_int("NAPCAT_WS_PORT", 3001, minimum=1),
+        ws_port=_env_int("NAPCAT_WS_PORT", 8082, minimum=1),
         ws_path=os.getenv("NAPCAT_WS_PATH", "/onebot/v11/ws").strip()
         or "/onebot/v11/ws",
         token=os.getenv("NAPCAT_TOKEN", "").strip(),

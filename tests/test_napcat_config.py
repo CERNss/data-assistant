@@ -33,7 +33,7 @@ class TestNapCatConfigDefaults(unittest.TestCase):
 
     def test_default_ws_port(self) -> None:
         cfg = load_napcat_config()
-        self.assertEqual(cfg.ws_port, 3001)
+        self.assertEqual(cfg.ws_port, 8082)
 
     def test_default_ws_path(self) -> None:
         cfg = load_napcat_config()
@@ -120,7 +120,7 @@ class TestNapCatConfigEnvOverrides(unittest.TestCase):
     def test_invalid_ws_port_falls_back_to_default(self) -> None:
         with patch.dict(os.environ, {"NAPCAT_WS_PORT": "not-a-number"}):
             cfg = load_napcat_config()
-        self.assertEqual(cfg.ws_port, 3001)
+        self.assertEqual(cfg.ws_port, 8082)
 
     def test_invalid_bot_qq_falls_back_to_default(self) -> None:
         with patch.dict(os.environ, {"NAPCAT_BOT_QQ": "not-a-number"}):

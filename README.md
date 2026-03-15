@@ -41,14 +41,14 @@ cp .env.example .env
 
 `logger_service` is the fixed server endpoint; NapCat connects to it as client.
 
-- Default endpoint: `ws://<logger-host>:3001/onebot/v11/ws`
+- Default endpoint: `ws://<logger-host>:8082/onebot/v11/ws`
 - Optional auth header: `Authorization: Bearer <NAPCAT_TOKEN>`
 
 Required logger env vars:
 
 ```env
 NAPCAT_WS_HOST=0.0.0.0
-NAPCAT_WS_PORT=3001
+NAPCAT_WS_PORT=8082
 NAPCAT_WS_PATH=/onebot/v11/ws
 NAPCAT_TOKEN=
 NAPCAT_ACTION_TIMEOUT_SEC=8.0
