@@ -6,7 +6,7 @@ services:
       - "4222:4222"
       - "8222:8222"
     volumes:
-      - nats-data:/data
+      - ./.data/nats:/data
     restart: unless-stopped
     networks:
       - data-assistant-net
@@ -20,7 +20,7 @@ services:
     ports:
       - "25432:5432"
     volumes:
-      - pg-data:/var/lib/postgresql/data
+      - ./.data/postgres:/var/lib/postgresql/data
     restart: unless-stopped
     networks:
       - data-assistant-net
@@ -85,7 +85,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://host.docker.internal:4317"
       OTEL_EXPORTER_OTLP_INSECURE: "true"
     volumes:
-      - chat-data:/app/data
+      - ./.data/chat:/app/data
       - ${CHAT_IMAGE_TAGGER_TOOL_ROOT_HOST:?set CHAT_IMAGE_TAGGER_TOOL_ROOT_HOST in .env}:/opt/tagger:ro
     depends_on:
       fluent-bit:
@@ -131,7 +131,7 @@ services:
     ports:
       - "8082:8082"
     volumes:
-      - chat-data:/app/data
+      - ./.data/chat:/app/data
     depends_on:
       fluent-bit:
         condition: service_healthy
@@ -154,11 +154,6 @@ services:
     restart: unless-stopped
     networks:
       - data-assistant-net
-
-volumes:
-  chat-data:
-  nats-data:
-  pg-data:
 
 networks:
   data-assistant-net:

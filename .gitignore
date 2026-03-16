@@ -68,9 +68,10 @@ logs/
 .ipynb_checkpoints/
 
 # =========================
-# NoneBot / FastAPI / ASGI
+# Runtime data (Docker bind mounts)
 # =========================
 data/
+.data/
 nb_session/
 .cache/
 
