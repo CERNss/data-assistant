@@ -8,6 +8,41 @@ from typing import Any
 from .db import get_pool
 
 
+def extract_plain_text(
+    segments: list[dict[str, Any]] | None,
+    raw_message: str | None,
+) -> str | None:
+    if segments is None:
+        return raw_message
+
+    parts: list[str] = []
+    for segment in segments:
+        if not isinstance(segment, dict) or segment.get("type") != "text":
+            continue
+        data = segment.get("data")
+        if not isinstance(data, dict):
+            continue
+        text = data.get("text")
+        if isinstance(text, str):
+            parts.append(text)
+    return "".join(parts)
+
+
+def extract_sender_fields(
+    sender: dict[str, Any] | None,
+) -> tuple[str | None, str | None, str | None]:
+    if sender is None:
+        return None, None, None
+
+    nickname_raw = sender.get("nickname")
+    card_raw = sender.get("card")
+    role_raw = sender.get("role")
+    nickname = nickname_raw if isinstance(nickname_raw, str) else None
+    card = card_raw if isinstance(card_raw, str) else None
+    role = role_raw if isinstance(role_raw, str) else None
+    return nickname, card, role
+
+
 async def insert_event(
     *,
     post_type: str,
@@ -44,6 +79,51 @@ async def insert_event(
         raw_message,
         payload_hash,
         json.dumps(raw, ensure_ascii=False),
+    )
+    return row["id"]
+
+
+async def insert_message(
+    *,
+    event_id: int,
+    message_type: str,
+    user_id: int,
+    group_id: int | None,
+    group_name: str | None,
+    sender_nickname: str | None,
+    sender_card: str | None,
+    sender_role: str | None,
+    message_id: str | None,
+    plain_text: str | None,
+    message_segments: list[dict[str, Any]] | None,
+    event_time: datetime,
+) -> int:
+    pool = get_pool()
+    row = await pool.fetchrow(
+        """
+        INSERT INTO onebot_messages
+            (event_id, message_type, user_id, group_id, group_name,
+             sender_nickname, sender_card, sender_role, message_id,
+             plain_text, message_segments, event_time)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)
+        RETURNING id
+        """,
+        event_id,
+        message_type,
+        user_id,
+        group_id,
+        group_name,
+        sender_nickname,
+        sender_card,
+        sender_role,
+        message_id,
+        plain_text,
+        (
+            json.dumps(message_segments, ensure_ascii=False)
+            if message_segments is not None
+            else None
+        ),
+        event_time,
     )
     return row["id"]
 

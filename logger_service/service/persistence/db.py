@@ -32,6 +32,27 @@ CREATE INDEX IF NOT EXISTS idx_onebot_events_group_id ON onebot_events(group_id)
 CREATE INDEX IF NOT EXISTS idx_onebot_events_received_at ON onebot_events(received_at);
 CREATE INDEX IF NOT EXISTS idx_onebot_events_message_id ON onebot_events(message_id);
 
+CREATE TABLE IF NOT EXISTS onebot_messages (
+    id bigserial PRIMARY KEY,
+    event_id bigint NOT NULL REFERENCES onebot_events(id) ON DELETE CASCADE,
+    message_type text NOT NULL,
+    user_id bigint NOT NULL,
+    group_id bigint,
+    group_name text,
+    sender_nickname text,
+    sender_card text,
+    sender_role text,
+    message_id text,
+    plain_text text,
+    message_segments jsonb,
+    event_time timestamptz NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_onebot_messages_user_id ON onebot_messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_onebot_messages_group_id ON onebot_messages(group_id);
+CREATE INDEX IF NOT EXISTS idx_onebot_messages_event_time ON onebot_messages(event_time);
+
 CREATE TABLE IF NOT EXISTS onebot_message_images (
     id bigserial PRIMARY KEY,
     event_id bigint NOT NULL REFERENCES onebot_events(id) ON DELETE CASCADE,

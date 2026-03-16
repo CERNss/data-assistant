@@ -150,7 +150,12 @@ def _record_image_metrics(
 
 async def persist_event(event: OneBotEvent) -> None:
     from ..chat_image.config import load_chat_image_config
-    from ..persistence.repository import insert_event
+    from ..persistence.repository import (
+        extract_plain_text,
+        extract_sender_fields,
+        insert_event,
+        insert_message,
+    )
 
     chat_config = load_chat_image_config()
     napcat_config = load_napcat_config()
@@ -190,6 +195,41 @@ async def persist_event(event: OneBotEvent) -> None:
 
         if event.post_type not in {"message", "message_sent"}:
             return
+
+        message_type = event.message_type or (
+            "group" if event.group_id is not None else "private"
+        )
+        user_id = event.self_id if event.post_type == "message_sent" else event.user_id
+        sender_nickname, sender_card, sender_role = extract_sender_fields(event.sender)
+        if message_type == "private":
+            sender_card = None
+            sender_role = None
+
+        try:
+            await insert_message(
+                event_id=event_id,
+                message_type=message_type,
+                user_id=user_id if user_id is not None else event.self_id,
+                group_id=event.group_id,
+                group_name=event.group_name,
+                sender_nickname=sender_nickname,
+                sender_card=sender_card,
+                sender_role=sender_role,
+                message_id=event.message_id,
+                plain_text=extract_plain_text(
+                    event.message_segments, event.raw_message
+                ),
+                message_segments=event.message_segments,
+                event_time=event_time,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to insert structured message: post_type={} message_id={} error={}",
+                event.post_type,
+                event.message_id,
+                exc,
+            )
+
         if not event.images:
             return
 
