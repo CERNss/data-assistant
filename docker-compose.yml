@@ -32,6 +32,8 @@ services:
       PGADMIN_DEFAULT_PASSWORD: pgadmin
     ports:
       - "25050:80"
+    volumes:
+      - ./.data/pgadmin:/var/lib/pgadmin
     depends_on:
       - db
     restart: unless-stopped
