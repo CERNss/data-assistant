@@ -104,6 +104,8 @@ async def _health_handler(_request: aiohttp.web.Request) -> aiohttp.web.Response
 async def run_server(
     config: NapCatConfig,
     on_event: Callable[[dict[str, Any]], Awaitable[None]],
+    *,
+    stop_event: asyncio.Event | None = None,
 ) -> None:
     app = aiohttp.web.Application()
     app.router.add_route("GET", "/health", _health_handler)
@@ -119,7 +121,10 @@ async def run_server(
         config.ws_path,
     )
     try:
-        await _block_forever()
+        if stop_event is None:
+            await _block_forever()
+        else:
+            await stop_event.wait()
     finally:
         await runner.cleanup()
 

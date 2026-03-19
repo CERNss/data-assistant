@@ -60,6 +60,12 @@ class TestProcessorMainIntegration(unittest.TestCase):
     def test_main_initializes_telemetry_before_gather(self) -> None:
         from unittest.mock import patch
 
+        def _fake_asyncio_run(coro: object) -> int:
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
+            return 0
+
         with (
             patch(
                 "processor_service.service.main.telemetry.init_telemetry"
@@ -69,6 +75,7 @@ class TestProcessorMainIntegration(unittest.TestCase):
             ) as install_error_hooks,
             patch("processor_service.service.main.asyncio.run") as mock_run,
         ):
+            mock_run.side_effect = _fake_asyncio_run
             from processor_service.service.main import main
 
             main()

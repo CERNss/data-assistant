@@ -217,7 +217,10 @@ def _record_message_metrics(
         MESSAGE_LATENCY_MS.record(latency_ms, attributes)
 
 
-async def _run(process_backlog: bool) -> int:
+async def _run(
+    process_backlog: bool,
+    stop_event: asyncio.Event | None = None,
+) -> int:
     config = load_chat_image_config()
     if not config.tagger.enabled:
         print("CHAT_IMAGE_TAGGER_ENABLED is false, tagger worker will not start.")
@@ -267,9 +270,9 @@ async def _run(process_backlog: bool) -> int:
                 backlog_summary["requeued"],
             )
 
-    stop_event = asyncio.Event()
+    shutdown_event = stop_event or asyncio.Event()
     try:
-        await stop_event.wait()
+        await shutdown_event.wait()
     except asyncio.CancelledError:
         pass
     finally:
