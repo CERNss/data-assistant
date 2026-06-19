@@ -8,11 +8,29 @@ cd "$ROOT_DIR"
 DATA_ROOT="${DATA_ROOT:-$ROOT_DIR/.data}"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 ENV_EXAMPLE="${ENV_EXAMPLE:-$ROOT_DIR/.env.example}"
-DOCKERHUB_NAMESPACE="${DOCKERHUB_NAMESPACE:-${DOCKERHUB_USERNAME:-}}"
+CONTAINER_REGISTRY_ENV_SET=0
+CONTAINER_NAMESPACE_ENV_SET=0
+IMAGE_TAG_ENV_SET=0
+TAGGER_BASE_URL_ENV_SET=0
+if [[ -n "${CONTAINER_REGISTRY+x}" || -n "${REGISTRY+x}" ]]; then
+  CONTAINER_REGISTRY_ENV_SET=1
+fi
+if [[ -n "${CONTAINER_NAMESPACE+x}" || -n "${DOCKERHUB_NAMESPACE+x}" || -n "${DOCKERHUB_USERNAME+x}" ]]; then
+  CONTAINER_NAMESPACE_ENV_SET=1
+fi
+if [[ -n "${IMAGE_TAG+x}" || -n "${TAG+x}" ]]; then
+  IMAGE_TAG_ENV_SET=1
+fi
+if [[ -n "${TAGGER_BASE_URL+x}" ]]; then
+  TAGGER_BASE_URL_ENV_SET=1
+fi
+CONTAINER_REGISTRY="${CONTAINER_REGISTRY:-${REGISTRY:-docker.io}}"
+CONTAINER_NAMESPACE="${CONTAINER_NAMESPACE:-${DOCKERHUB_NAMESPACE:-${DOCKERHUB_USERNAME:-}}}"
 IMAGE_TAG="${IMAGE_TAG:-${TAG:-latest}}"
 SKIP_IMAGE_SYNC="${SKIP_IMAGE_SYNC:-0}"
 TAGGER_BASE_URL="${TAGGER_BASE_URL:-http://host.docker.internal:8000}"
-DOCKERHUB_NAMESPACE_SET=0
+CONTAINER_REGISTRY_SET=0
+CONTAINER_NAMESPACE_SET=0
 IMAGE_TAG_SET=0
 TAGGER_BASE_URL_SET=0
 
@@ -23,8 +41,10 @@ Usage:
 
 Options:
   --tagger-base-url <url> Write CHAT_IMAGE_TAGGER_BASE_URL into .env
+  --registry <host>       Container registry host (default: docker.io)
+  --namespace <namespace> Container registry namespace/org for image sync
   --dockerhub-namespace <namespace>
-                          Docker Hub namespace/org for image sync
+                          Legacy alias for --namespace
   --tag <tag>             Override image tag (default: latest)
   --skip-image-sync       Skip docker pull + retag
   -h, --help              Show help
@@ -33,10 +53,15 @@ Environment variables:
   DATA_ROOT         Runtime data root (default: ./.data)
   ENV_FILE          Target .env file path (default: ./.env)
   ENV_EXAMPLE       Template env file path (default: ./.env.example)
+  CONTAINER_REGISTRY
+                    Container registry host (default: docker.io)
+  CONTAINER_NAMESPACE
+                    Registry namespace/org for image sync
+  REGISTRY          Alias for CONTAINER_REGISTRY
   DOCKERHUB_NAMESPACE
-                    Docker Hub namespace/org for image sync
+                    Legacy Docker Hub namespace fallback
   DOCKERHUB_USERNAME
-                    Fallback Docker Hub username for namespace
+                    Legacy Docker Hub username fallback for namespace
   IMAGE_TAG         Image tag for image sync and compose
   SKIP_IMAGE_SYNC=1 Skip image sync
 
@@ -44,8 +69,11 @@ What it does:
   1. Create Docker/runtime directories under ./.data
   2. Initialize queue/log files if missing
   3. Copy .env.example to .env if .env does not exist
-  4. Write DOCKERHUB_NAMESPACE / IMAGE_TAG / optional tagger base URL into .env
-  5. Pull Docker Hub logger/processor images and retag them locally for compose
+  4. Write CONTAINER_REGISTRY / CONTAINER_NAMESPACE / IMAGE_TAG / optional tagger base URL into .env
+  5. Pull registry logger/processor images and retag them locally for compose
+
+Precedence:
+  CLI options > environment variables > existing .env values > defaults
 EOF
 }
 
@@ -150,10 +178,16 @@ while [[ $# -gt 0 ]]; do
       TAGGER_BASE_URL_SET=1
       shift 2
       ;;
-    --dockerhub-namespace|--registry)
+    --registry)
       [[ $# -ge 2 ]] || err "Missing value for $1"
-      DOCKERHUB_NAMESPACE="$2"
-      DOCKERHUB_NAMESPACE_SET=1
+      CONTAINER_REGISTRY="$2"
+      CONTAINER_REGISTRY_SET=1
+      shift 2
+      ;;
+    --namespace|--dockerhub-namespace)
+      [[ $# -ge 2 ]] || err "Missing value for $1"
+      CONTAINER_NAMESPACE="$2"
+      CONTAINER_NAMESPACE_SET=1
       shift 2
       ;;
     --tag)
@@ -197,54 +231,78 @@ else
   printf '[init.sh] Keep existing env file: %s\n' "$ENV_FILE"
 fi
 
-if [[ "$DOCKERHUB_NAMESPACE_SET" -eq 0 ]]; then
-  EXISTING_NAMESPACE="$(get_env_value "DOCKERHUB_NAMESPACE" "$ENV_FILE" || true)"
-  if [[ -n "${EXISTING_NAMESPACE:-}" ]]; then
-    DOCKERHUB_NAMESPACE="$EXISTING_NAMESPACE"
+if [[ "$CONTAINER_REGISTRY_SET" -eq 0 && "$CONTAINER_REGISTRY_ENV_SET" -eq 0 ]]; then
+  EXISTING_REGISTRY="$(get_env_value "CONTAINER_REGISTRY" "$ENV_FILE" || true)"
+  if [[ -n "${EXISTING_REGISTRY:-}" ]]; then
+    CONTAINER_REGISTRY="$EXISTING_REGISTRY"
   fi
 fi
 
-if [[ "$IMAGE_TAG_SET" -eq 0 ]]; then
+if [[ "$CONTAINER_NAMESPACE_SET" -eq 0 && "$CONTAINER_NAMESPACE_ENV_SET" -eq 0 ]]; then
+  EXISTING_NAMESPACE="$(get_env_value "CONTAINER_NAMESPACE" "$ENV_FILE" || true)"
+  if [[ -z "${EXISTING_NAMESPACE:-}" ]]; then
+    EXISTING_NAMESPACE="$(get_env_value "DOCKERHUB_NAMESPACE" "$ENV_FILE" || true)"
+  fi
+  if [[ -n "${EXISTING_NAMESPACE:-}" ]]; then
+    CONTAINER_NAMESPACE="$EXISTING_NAMESPACE"
+  fi
+fi
+
+if [[ "$IMAGE_TAG_SET" -eq 0 && "$IMAGE_TAG_ENV_SET" -eq 0 ]]; then
   EXISTING_IMAGE_TAG="$(get_env_value "IMAGE_TAG" "$ENV_FILE" || true)"
   if [[ -n "${EXISTING_IMAGE_TAG:-}" ]]; then
     IMAGE_TAG="$EXISTING_IMAGE_TAG"
   fi
 fi
 
-if [[ "$TAGGER_BASE_URL_SET" -eq 0 ]]; then
+if [[ "$TAGGER_BASE_URL_SET" -eq 0 && "$TAGGER_BASE_URL_ENV_SET" -eq 0 ]]; then
   EXISTING_TAGGER_BASE_URL="$(get_env_value "CHAT_IMAGE_TAGGER_BASE_URL" "$ENV_FILE" || true)"
   if [[ -n "${EXISTING_TAGGER_BASE_URL:-}" ]]; then
     TAGGER_BASE_URL="$EXISTING_TAGGER_BASE_URL"
   fi
 fi
 
-DOCKERHUB_NAMESPACE="${DOCKERHUB_NAMESPACE%/}"
+CONTAINER_REGISTRY="${CONTAINER_REGISTRY#https://}"
+CONTAINER_REGISTRY="${CONTAINER_REGISTRY#http://}"
+CONTAINER_REGISTRY="${CONTAINER_REGISTRY%/}"
+CONTAINER_NAMESPACE="${CONTAINER_NAMESPACE#/}"
+CONTAINER_NAMESPACE="${CONTAINER_NAMESPACE%/}"
 TAGGER_BASE_URL="${TAGGER_BASE_URL%/}"
 
-if [[ -z "$DOCKERHUB_NAMESPACE" ]]; then
-  err "DOCKERHUB_NAMESPACE or DOCKERHUB_USERNAME is required"
+if [[ -z "$CONTAINER_REGISTRY" ]]; then
+  err "CONTAINER_REGISTRY must not be empty"
 fi
 
-if [[ "$DOCKERHUB_NAMESPACE_SET" -eq 1 ]]; then
-  set_env_value "DOCKERHUB_NAMESPACE" "$DOCKERHUB_NAMESPACE" "$ENV_FILE"
+if [[ -z "$CONTAINER_NAMESPACE" ]]; then
+  err "CONTAINER_NAMESPACE, DOCKERHUB_NAMESPACE, or DOCKERHUB_USERNAME is required"
+fi
+
+if [[ "$CONTAINER_REGISTRY_SET" -eq 1 || "$CONTAINER_REGISTRY_ENV_SET" -eq 1 ]]; then
+  set_env_value "CONTAINER_REGISTRY" "$CONTAINER_REGISTRY" "$ENV_FILE"
 else
-  ensure_env_value "DOCKERHUB_NAMESPACE" "$DOCKERHUB_NAMESPACE" "$ENV_FILE"
+  ensure_env_value "CONTAINER_REGISTRY" "$CONTAINER_REGISTRY" "$ENV_FILE"
 fi
 
-if [[ "$IMAGE_TAG_SET" -eq 1 ]]; then
+if [[ "$CONTAINER_NAMESPACE_SET" -eq 1 || "$CONTAINER_NAMESPACE_ENV_SET" -eq 1 ]]; then
+  set_env_value "CONTAINER_NAMESPACE" "$CONTAINER_NAMESPACE" "$ENV_FILE"
+else
+  ensure_env_value "CONTAINER_NAMESPACE" "$CONTAINER_NAMESPACE" "$ENV_FILE"
+fi
+
+if [[ "$IMAGE_TAG_SET" -eq 1 || "$IMAGE_TAG_ENV_SET" -eq 1 ]]; then
   set_env_value "IMAGE_TAG" "$IMAGE_TAG" "$ENV_FILE"
 else
   ensure_env_value "IMAGE_TAG" "$IMAGE_TAG" "$ENV_FILE"
 fi
 
-if [[ "$TAGGER_BASE_URL_SET" -eq 1 ]]; then
+if [[ "$TAGGER_BASE_URL_SET" -eq 1 || "$TAGGER_BASE_URL_ENV_SET" -eq 1 ]]; then
   set_env_value "CHAT_IMAGE_TAGGER_BASE_URL" "$TAGGER_BASE_URL" "$ENV_FILE"
 else
   ensure_env_value "CHAT_IMAGE_TAGGER_BASE_URL" "$TAGGER_BASE_URL" "$ENV_FILE"
 fi
 
-REMOTE_LOGGER_IMAGE="${DOCKERHUB_NAMESPACE}/data-assistant-logger:${IMAGE_TAG}"
-REMOTE_PROCESSOR_IMAGE="${DOCKERHUB_NAMESPACE}/data-assistant-processor:${IMAGE_TAG}"
+REMOTE_LOGGER_IMAGE="${CONTAINER_REGISTRY}/${CONTAINER_NAMESPACE}/data-assistant-logger:${IMAGE_TAG}"
+REMOTE_PROCESSOR_IMAGE="${CONTAINER_REGISTRY}/${CONTAINER_NAMESPACE}/data-assistant-processor:${IMAGE_TAG}"
 LOCAL_LOGGER_IMAGE="data-assistant-logger:${IMAGE_TAG}"
 LOCAL_PROCESSOR_IMAGE="data-assistant-processor:${IMAGE_TAG}"
 
@@ -262,7 +320,8 @@ cat <<EOF
 Data root:       $DATA_ROOT
 Env file:        $ENV_FILE
 Tagger base URL: ${TAGGER_BASE_URL:-<not changed>}
-Docker Hub namespace: $DOCKERHUB_NAMESPACE
+Registry:            $CONTAINER_REGISTRY
+Registry namespace:  $CONTAINER_NAMESPACE
 Image tag:            $IMAGE_TAG
 Remote logger:        $REMOTE_LOGGER_IMAGE
 Remote processor:     $REMOTE_PROCESSOR_IMAGE

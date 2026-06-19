@@ -42,7 +42,7 @@ This will:
 - create runtime directories under `./.data/`
 - initialize queue/log files used by the processor/logger
 - copy `.env.example` to `.env` if needed
-- pull logger/processor images from Docker Hub and retag them locally for compose
+- pull logger/processor images from the configured container registry and retag them locally for compose
 - set `CHAT_IMAGE_TAGGER_BASE_URL` in `.env` when you pass `--tagger-base-url`
 
 ## NapCat Reverse WebSocket
@@ -117,15 +117,27 @@ GitHub Actions publishes the Python service images independently from any Go pro
 - `data-assistant-logger`
 - `data-assistant-processor`
 
-Configure these GitHub repository secrets:
+By default the workflow publishes to Docker Hub. Configure these GitHub repository
+secrets for Docker Hub:
 
 - `DOCKERHUB_USERNAME`
 - `DOCKERHUB_TOKEN`
 
-Optionally configure these repository variables:
+Optionally configure these GitHub repository variables:
 
 - `DOCKERHUB_NAMESPACE` (defaults to `DOCKERHUB_USERNAME`)
 - `DOCKER_PLATFORMS` (defaults to `linux/amd64,linux/arm64`)
+
+To publish to a custom container registry instead, configure:
+
+- `CONTAINER_REGISTRY` variable, for example `registry.example.com`, `ghcr.io`, or an ACR/Harbor registry host
+- `CONTAINER_NAMESPACE` variable, for example `my-team` or `my-org/project`
+- `REGISTRY_USERNAME` secret
+- `REGISTRY_TOKEN` secret
+
+For GHCR, `CONTAINER_REGISTRY=ghcr.io` can use the default GitHub token if
+`REGISTRY_USERNAME` and `REGISTRY_TOKEN` are not set; the workflow defaults the
+namespace to the repository owner.
 
 Image publishing is tag-driven. Push a Python release tag to build and push both
 service images:
@@ -141,15 +153,19 @@ Release tags also publish `latest`.
 Build and push service images manually:
 
 ```bash
-DOCKERHUB_NAMESPACE=<namespace> ./build.sh all
+CONTAINER_NAMESPACE=<namespace> ./build.sh all
+CONTAINER_REGISTRY=registry.example.com CONTAINER_NAMESPACE=<namespace> ./build.sh all
 ```
 
 On the deployment server:
 
 ```bash
-./init.sh --dockerhub-namespace <namespace> --tagger-base-url http://host.docker.internal:8000
+./init.sh --registry registry.example.com --namespace <namespace> --tagger-base-url http://host.docker.internal:8000
 docker compose up -d
 ```
+
+`init.sh` uses this precedence when writing `.env`: CLI options, environment
+variables, existing `.env` values, then defaults.
 
 ## Database Persistence
 

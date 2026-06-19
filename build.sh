@@ -7,7 +7,8 @@ cd "$ROOT_DIR"
 
 SERVICE="${1:-all}"
 TAG="${TAG:-latest}"
-DOCKERHUB_NAMESPACE="${DOCKERHUB_NAMESPACE:-${DOCKERHUB_USERNAME:-}}"
+CONTAINER_REGISTRY="${CONTAINER_REGISTRY:-${REGISTRY:-docker.io}}"
+CONTAINER_NAMESPACE="${CONTAINER_NAMESPACE:-${DOCKERHUB_NAMESPACE:-${DOCKERHUB_USERNAME:-}}}"
 PLATFORM="${PLATFORM:-}"
 PUSH="${PUSH:-1}"
 
@@ -17,16 +18,20 @@ Usage:
   ./build.sh [logger|processor|all]
 
 Environment variables:
-  DOCKERHUB_NAMESPACE  Docker Hub namespace/org (defaults to DOCKERHUB_USERNAME)
-  DOCKERHUB_USERNAME   Docker Hub username fallback for namespace
+  CONTAINER_REGISTRY   Container registry host (default: docker.io)
+  CONTAINER_NAMESPACE  Registry namespace/org
+  REGISTRY             Alias for CONTAINER_REGISTRY
+  DOCKERHUB_NAMESPACE  Legacy Docker Hub namespace fallback
+  DOCKERHUB_USERNAME   Legacy Docker Hub username fallback for namespace
   TAG                  Image tag (default: latest)
   PLATFORM             Optional docker buildx --platform value
   PUSH=0               Build locally without pushing
 
 Examples:
   ./build.sh
-  DOCKERHUB_NAMESPACE=myorg TAG=v1.0.0 ./build.sh logger
-  PUSH=0 DOCKERHUB_NAMESPACE=myorg ./build.sh processor
+  CONTAINER_NAMESPACE=myorg TAG=v1.0.0 ./build.sh logger
+  CONTAINER_REGISTRY=registry.example.com CONTAINER_NAMESPACE=myteam TAG=v1.0.0 ./build.sh all
+  PUSH=0 CONTAINER_NAMESPACE=myorg ./build.sh processor
 EOF
 }
 
@@ -52,15 +57,22 @@ esac
 command -v docker >/dev/null 2>&1 || err "docker command not found"
 docker buildx version >/dev/null 2>&1 || err "docker buildx is required but was not found"
 
-DOCKERHUB_NAMESPACE="${DOCKERHUB_NAMESPACE%/}"
-if [[ -z "$DOCKERHUB_NAMESPACE" ]]; then
-  err "DOCKERHUB_NAMESPACE or DOCKERHUB_USERNAME is required"
+CONTAINER_REGISTRY="${CONTAINER_REGISTRY#https://}"
+CONTAINER_REGISTRY="${CONTAINER_REGISTRY#http://}"
+CONTAINER_REGISTRY="${CONTAINER_REGISTRY%/}"
+CONTAINER_NAMESPACE="${CONTAINER_NAMESPACE#/}"
+CONTAINER_NAMESPACE="${CONTAINER_NAMESPACE%/}"
+if [[ -z "$CONTAINER_REGISTRY" ]]; then
+  err "CONTAINER_REGISTRY must not be empty"
+fi
+if [[ -z "$CONTAINER_NAMESPACE" ]]; then
+  err "CONTAINER_NAMESPACE, DOCKERHUB_NAMESPACE, or DOCKERHUB_USERNAME is required"
 fi
 
 build_one() {
   local service_name="$1"
   local dockerfile_path="$2"
-  local image_ref="${DOCKERHUB_NAMESPACE}/data-assistant-${service_name}:${TAG}"
+  local image_ref="${CONTAINER_REGISTRY}/${CONTAINER_NAMESPACE}/data-assistant-${service_name}:${TAG}"
   local cmd=(docker buildx build -f "$dockerfile_path")
 
   if [[ -n "$PLATFORM" ]]; then
