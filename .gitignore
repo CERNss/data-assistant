@@ -89,3 +89,9 @@ checkpoints/
 # =========================
 config.local.*
 secrets.*
+
+# =========================
+# Local agent tooling
+# =========================
+.agents/
+.opencode/
