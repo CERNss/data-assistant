@@ -117,8 +117,8 @@ GitHub Actions publishes the Python service images independently from any Go pro
 - `data-assistant-logger`
 - `data-assistant-processor`
 
-By default the workflow publishes to Docker Hub. Configure these GitHub repository
-secrets for Docker Hub:
+By default the workflow publishes to Docker Hub. Leave `CONTAINER_REGISTRY`
+unset, and configure these GitHub repository secrets:
 
 - `DOCKERHUB_USERNAME`
 - `DOCKERHUB_TOKEN`
@@ -128,7 +128,8 @@ Optionally configure these GitHub repository variables:
 - `DOCKERHUB_NAMESPACE` (defaults to `DOCKERHUB_USERNAME`)
 - `DOCKER_PLATFORMS` (defaults to `linux/amd64,linux/arm64`)
 
-To publish to a custom container registry instead, configure:
+To publish to a custom container registry instead, set `CONTAINER_REGISTRY` and
+configure:
 
 - `CONTAINER_REGISTRY` variable, for example `registry.example.com`, `ghcr.io`, or an ACR/Harbor registry host
 - `CONTAINER_NAMESPACE` variable, for example `my-team` or `my-org/project`
@@ -160,6 +161,7 @@ CONTAINER_REGISTRY=registry.example.com CONTAINER_NAMESPACE=<namespace> ./build.
 On the deployment server:
 
 ```bash
+./init.sh --namespace <dockerhub-namespace> --tagger-base-url http://host.docker.internal:8000
 ./init.sh --registry registry.example.com --namespace <namespace> --tagger-base-url http://host.docker.internal:8000
 docker compose up -d
 ```
