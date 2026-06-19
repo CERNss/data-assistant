@@ -127,6 +127,17 @@ Optionally configure these repository variables:
 - `DOCKERHUB_NAMESPACE` (defaults to `DOCKERHUB_USERNAME`)
 - `DOCKER_PLATFORMS` (defaults to `linux/amd64,linux/arm64`)
 
+Image publishing is tag-driven. Push a Python release tag to build and push both
+service images:
+
+```bash
+git tag python-v1.0.0
+git push origin python-v1.0.0
+```
+
+Branch pushes and pull requests run tests only; they do not publish Docker images.
+Release tags also publish `latest`.
+
 Build and push service images manually:
 
 ```bash
