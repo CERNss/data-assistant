@@ -1,0 +1,166 @@
+services:
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - ./.data/nats:/data
+    restart: unless-stopped
+    networks:
+      - data-assistant-net
+
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: app_db
+    ports:
+      - "25432:5432"
+    volumes:
+      - ./.data/postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - data-assistant-net
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.dev
+      PGADMIN_DEFAULT_PASSWORD: pgadmin
+    ports:
+      - "25050:80"
+    volumes:
+      - ./.data/pgadmin:/var/lib/pgadmin
+    depends_on:
+      - db
+    restart: unless-stopped
+    networks:
+      - data-assistant-net
+
+  fluent-bit:
+    image: fluent/fluent-bit:latest
+    env_file:
+      - .env
+    volumes:
+      - ./fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+    command: ["/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/fluent-bit.conf"]
+    environment:
+      FB_OTLP_HOST: "${FB_OTLP_HOST:-host.docker.internal}"
+      FB_OTLP_PORT: "${FB_OTLP_PORT:-4318}"
+      FB_OTLP_LOGS_URI: "${FB_OTLP_LOGS_URI:-/v1/logs}"
+      FB_OTLP_TLS: "${FB_OTLP_TLS:-Off}"
+      FB_OTLP_TLS_VERIFY: "${FB_OTLP_TLS_VERIFY:-Off}"
+    healthcheck:
+      test: ["CMD", "/fluent-bit/bin/fluent-bit", "--version"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - data-assistant-net
+
+  processor:
+    image: "data-assistant-processor:${IMAGE_TAG:-latest}"
+    pull_policy: never
+    env_file:
+      - .env
+    environment:
+      CHAT_IMAGE_NATS_ENABLED: "true"
+      CHAT_IMAGE_NATS_SERVERS: "nats://nats:4222"
+      CHAT_IMAGE_TAGGER_ENABLED: "true"
+      CHAT_IMAGE_TAGGER_BASE_URL: "${CHAT_IMAGE_TAGGER_BASE_URL:-http://host.docker.internal:8000}"
+      CHAT_IMAGE_SAVE_DIR: "/data/images"
+      GROUP_IMAGE_SAVE_DIR: "/data/images"
+      CHAT_IMAGE_TAGGER_QUEUE_FILE: "/app/data/chat_image_tagger_queue.json"
+      CHAT_IMAGE_TAGGER_AUDIT_LOG_FILE: "/app/data/group_image_tags.jsonl"
+      OTEL_ENABLED: "true"
+      OTEL_SERVICE_NAME: "data-assistant-processor"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://host.docker.internal:4317"
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+    volumes:
+      - ./.data/chat:/app/data
+      - ./.data/chat/chat_images:/data/images
+    depends_on:
+      fluent-bit:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: "fluent-bit:24224"
+        tag: "docker.processor-service"
+        fluentd-async: "true"
+        fluentd-buffer-limit: "8388608"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - data-assistant-net
+
+  logger:
+    image: "data-assistant-logger:${IMAGE_TAG:-latest}"
+    pull_policy: never
+    env_file:
+      - .env
+    environment:
+      NAPCAT_WS_HOST: "0.0.0.0"
+      NAPCAT_WS_PORT: "8082"
+      NAPCAT_ACTION_TIMEOUT_SEC: "8.0"
+      CHAT_IMAGE_NATS_ENABLED: "true"
+      CHAT_IMAGE_NATS_SERVERS: "nats://nats:4222"
+      CHAT_IMAGE_TAGGER_ENABLED: "false"
+      CHAT_IMAGE_SAVE_DIR: "/data/images"
+      GROUP_IMAGE_SAVE_DIR: "/data/images"
+      OTEL_ENABLED: "true"
+      OTEL_SERVICE_NAME: "data-assistant-logger"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://host.docker.internal:4317"
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      POSTGRES_DSN: "postgresql://admin:password@db:5432/app_db"
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./.data/chat:/app/data
+      - ./.data/chat/chat_images:/data/images
+    depends_on:
+      fluent-bit:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      db:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: "fluent-bit:24224"
+        tag: "docker.logger-service"
+        fluentd-async: "true"
+        fluentd-buffer-limit: "8388608"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    networks:
+      - data-assistant-net
+
+networks:
+  data-assistant-net:
+    driver: bridge

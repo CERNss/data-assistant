@@ -1,0 +1,155 @@
+name: Python Container Images
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  PYTHON_VERSION: "3.11"
+  IMAGE_PREFIX: data-assistant
+
+jobs:
+  test:
+    name: Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -U pip
+          python -m pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Compile Python sources
+        run: python -m compileall logger_service processor_service contracts tests
+
+  docker:
+    name: Build and push Python ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    env:
+      CONTAINER_REGISTRY: ${{ vars.CONTAINER_REGISTRY }}
+      CONTAINER_NAMESPACE: ${{ vars.CONTAINER_NAMESPACE }}
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+      DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      DOCKER_PLATFORMS: ${{ vars.DOCKER_PLATFORMS }}
+      GITHUB_ACTOR_NAME: ${{ github.actor }}
+      GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+      GITHUB_TOKEN_VALUE: ${{ secrets.GITHUB_TOKEN }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: logger
+            dockerfile: logger_service/Dockerfile
+          - service: processor
+            dockerfile: processor_service/Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set registry metadata inputs
+        id: registry-inputs
+        run: |
+          registry="${CONTAINER_REGISTRY:-docker.io}"
+          registry="${registry#https://}"
+          registry="${registry#http://}"
+          registry="${registry%/}"
+          platforms="${DOCKER_PLATFORMS:-linux/amd64,linux/arm64}"
+          if [ "$registry" = "ghcr.io" ]; then
+            namespace="${CONTAINER_NAMESPACE:-$GITHUB_REPOSITORY_OWNER}"
+            username="${REGISTRY_USERNAME:-$GITHUB_ACTOR_NAME}"
+            token="${REGISTRY_TOKEN:-$GITHUB_TOKEN_VALUE}"
+          else
+            namespace="${CONTAINER_NAMESPACE:-${DOCKERHUB_NAMESPACE:-${DOCKERHUB_USERNAME:-$REGISTRY_USERNAME}}}"
+            username="${REGISTRY_USERNAME:-$DOCKERHUB_USERNAME}"
+            token="${REGISTRY_TOKEN:-$DOCKERHUB_TOKEN}"
+          fi
+          namespace="${namespace#/}"
+          namespace="${namespace%/}"
+          if [ -z "$registry" ]; then
+            echo "CONTAINER_REGISTRY must not be empty." >&2
+            exit 1
+          fi
+          if [ -z "$namespace" ]; then
+            echo "CONTAINER_NAMESPACE variable is required, or configure Docker Hub/GHCR fallbacks." >&2
+            exit 1
+          fi
+          if [ -z "$username" ] || [ -z "$token" ]; then
+            echo "Registry credentials are required. Configure REGISTRY_USERNAME/REGISTRY_TOKEN or Docker Hub/GHCR fallbacks." >&2
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          {
+            echo "REGISTRY_LOGIN_USERNAME=$username"
+            echo "REGISTRY_LOGIN_TOKEN<<__REGISTRY_TOKEN__"
+            echo "$token"
+            echo "__REGISTRY_TOKEN__"
+          } >> "$GITHUB_ENV"
+          echo "registry=$registry" >> "$GITHUB_OUTPUT"
+          echo "namespace=$namespace" >> "$GITHUB_OUTPUT"
+          echo "image-base=$registry/$namespace" >> "$GITHUB_OUTPUT"
+          echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to container registry
+        env:
+          REGISTRY: ${{ steps.registry-inputs.outputs.registry }}
+        run: |
+          printf '%s' "$REGISTRY_LOGIN_TOKEN" \
+            | docker login "$REGISTRY" \
+                --username "$REGISTRY_LOGIN_USERNAME" \
+                --password-stdin
+
+      - name: Generate Docker tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.registry-inputs.outputs.image-base }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}
+          tags: |
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ steps.registry-inputs.outputs.platforms }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=python-${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=python-${{ matrix.service }}
