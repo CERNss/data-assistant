@@ -42,7 +42,7 @@ This will:
 - create runtime directories under `./.data/`
 - initialize queue/log files used by the processor/logger
 - copy `.env.example` to `.env` if needed
-- pull logger/processor images from the private registry and retag them locally for compose
+- pull logger/processor images from Docker Hub and retag them locally for compose
 - set `CHAT_IMAGE_TAGGER_BASE_URL` in `.env` when you pass `--tagger-base-url`
 
 ## NapCat Reverse WebSocket
@@ -110,18 +110,33 @@ Stop:
 docker compose down
 ```
 
-## Image Publish Workflow
+## Python Image Publish Workflow
 
-Build and push service images to the private registry:
+GitHub Actions publishes the Python service images independently from any Go project:
+
+- `data-assistant-logger`
+- `data-assistant-processor`
+
+Configure these GitHub repository secrets:
+
+- `DOCKERHUB_USERNAME`
+- `DOCKERHUB_TOKEN`
+
+Optionally configure these repository variables:
+
+- `DOCKERHUB_NAMESPACE` (defaults to `DOCKERHUB_USERNAME`)
+- `DOCKER_PLATFORMS` (defaults to `linux/amd64,linux/arm64`)
+
+Build and push service images manually:
 
 ```bash
-./build.sh all
+DOCKERHUB_NAMESPACE=<namespace> ./build.sh all
 ```
 
 On the deployment server:
 
 ```bash
-./init.sh --tagger-base-url http://host.docker.internal:8000
+./init.sh --dockerhub-namespace <namespace> --tagger-base-url http://host.docker.internal:8000
 docker compose up -d
 ```
 
@@ -179,7 +194,7 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 Syntax/import validation:
 
 ```bash
-python3 -m compileall .
+python3 -m compileall logger_service processor_service contracts tests
 ```
 
 ## Observability

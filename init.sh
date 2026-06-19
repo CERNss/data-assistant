@@ -8,11 +8,11 @@ cd "$ROOT_DIR"
 DATA_ROOT="${DATA_ROOT:-$ROOT_DIR/.data}"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 ENV_EXAMPLE="${ENV_EXAMPLE:-$ROOT_DIR/.env.example}"
-REGISTRY="${REGISTRY:-${REMOTE_REGISTRY:-192.168.10.142:5000}}"
+DOCKERHUB_NAMESPACE="${DOCKERHUB_NAMESPACE:-${DOCKERHUB_USERNAME:-}}"
 IMAGE_TAG="${IMAGE_TAG:-${TAG:-latest}}"
 SKIP_IMAGE_SYNC="${SKIP_IMAGE_SYNC:-0}"
 TAGGER_BASE_URL="${TAGGER_BASE_URL:-http://host.docker.internal:8000}"
-REGISTRY_SET=0
+DOCKERHUB_NAMESPACE_SET=0
 IMAGE_TAG_SET=0
 TAGGER_BASE_URL_SET=0
 
@@ -23,7 +23,8 @@ Usage:
 
 Options:
   --tagger-base-url <url> Write CHAT_IMAGE_TAGGER_BASE_URL into .env
-  --registry <host:port>  Override remote registry (default: 192.168.10.142:5000)
+  --dockerhub-namespace <namespace>
+                          Docker Hub namespace/org for image sync
   --tag <tag>             Override image tag (default: latest)
   --skip-image-sync       Skip docker pull + retag
   -h, --help              Show help
@@ -32,7 +33,10 @@ Environment variables:
   DATA_ROOT         Runtime data root (default: ./.data)
   ENV_FILE          Target .env file path (default: ./.env)
   ENV_EXAMPLE       Template env file path (default: ./.env.example)
-  REMOTE_REGISTRY   Remote registry for image sync
+  DOCKERHUB_NAMESPACE
+                    Docker Hub namespace/org for image sync
+  DOCKERHUB_USERNAME
+                    Fallback Docker Hub username for namespace
   IMAGE_TAG         Image tag for image sync and compose
   SKIP_IMAGE_SYNC=1 Skip image sync
 
@@ -40,8 +44,8 @@ What it does:
   1. Create Docker/runtime directories under ./.data
   2. Initialize queue/log files if missing
   3. Copy .env.example to .env if .env does not exist
-  4. Write REMOTE_REGISTRY / IMAGE_TAG / optional tagger base URL into .env
-  5. Pull remote logger/processor images and retag them locally for compose
+  4. Write DOCKERHUB_NAMESPACE / IMAGE_TAG / optional tagger base URL into .env
+  5. Pull Docker Hub logger/processor images and retag them locally for compose
 EOF
 }
 
@@ -146,10 +150,10 @@ while [[ $# -gt 0 ]]; do
       TAGGER_BASE_URL_SET=1
       shift 2
       ;;
-    --registry)
-      [[ $# -ge 2 ]] || err "Missing value for --registry"
-      REGISTRY="$2"
-      REGISTRY_SET=1
+    --dockerhub-namespace|--registry)
+      [[ $# -ge 2 ]] || err "Missing value for $1"
+      DOCKERHUB_NAMESPACE="$2"
+      DOCKERHUB_NAMESPACE_SET=1
       shift 2
       ;;
     --tag)
@@ -193,10 +197,10 @@ else
   printf '[init.sh] Keep existing env file: %s\n' "$ENV_FILE"
 fi
 
-if [[ "$REGISTRY_SET" -eq 0 ]]; then
-  EXISTING_REGISTRY="$(get_env_value "REMOTE_REGISTRY" "$ENV_FILE" || true)"
-  if [[ -n "${EXISTING_REGISTRY:-}" ]]; then
-    REGISTRY="$EXISTING_REGISTRY"
+if [[ "$DOCKERHUB_NAMESPACE_SET" -eq 0 ]]; then
+  EXISTING_NAMESPACE="$(get_env_value "DOCKERHUB_NAMESPACE" "$ENV_FILE" || true)"
+  if [[ -n "${EXISTING_NAMESPACE:-}" ]]; then
+    DOCKERHUB_NAMESPACE="$EXISTING_NAMESPACE"
   fi
 fi
 
@@ -214,13 +218,17 @@ if [[ "$TAGGER_BASE_URL_SET" -eq 0 ]]; then
   fi
 fi
 
-REGISTRY="${REGISTRY%/}"
+DOCKERHUB_NAMESPACE="${DOCKERHUB_NAMESPACE%/}"
 TAGGER_BASE_URL="${TAGGER_BASE_URL%/}"
 
-if [[ "$REGISTRY_SET" -eq 1 ]]; then
-  set_env_value "REMOTE_REGISTRY" "$REGISTRY" "$ENV_FILE"
+if [[ -z "$DOCKERHUB_NAMESPACE" ]]; then
+  err "DOCKERHUB_NAMESPACE or DOCKERHUB_USERNAME is required"
+fi
+
+if [[ "$DOCKERHUB_NAMESPACE_SET" -eq 1 ]]; then
+  set_env_value "DOCKERHUB_NAMESPACE" "$DOCKERHUB_NAMESPACE" "$ENV_FILE"
 else
-  ensure_env_value "REMOTE_REGISTRY" "$REGISTRY" "$ENV_FILE"
+  ensure_env_value "DOCKERHUB_NAMESPACE" "$DOCKERHUB_NAMESPACE" "$ENV_FILE"
 fi
 
 if [[ "$IMAGE_TAG_SET" -eq 1 ]]; then
@@ -235,8 +243,8 @@ else
   ensure_env_value "CHAT_IMAGE_TAGGER_BASE_URL" "$TAGGER_BASE_URL" "$ENV_FILE"
 fi
 
-REMOTE_LOGGER_IMAGE="${REGISTRY}/data-assistant-logger:${IMAGE_TAG}"
-REMOTE_PROCESSOR_IMAGE="${REGISTRY}/data-assistant-processor:${IMAGE_TAG}"
+REMOTE_LOGGER_IMAGE="${DOCKERHUB_NAMESPACE}/data-assistant-logger:${IMAGE_TAG}"
+REMOTE_PROCESSOR_IMAGE="${DOCKERHUB_NAMESPACE}/data-assistant-processor:${IMAGE_TAG}"
 LOCAL_LOGGER_IMAGE="data-assistant-logger:${IMAGE_TAG}"
 LOCAL_PROCESSOR_IMAGE="data-assistant-processor:${IMAGE_TAG}"
 
@@ -254,12 +262,12 @@ cat <<EOF
 Data root:       $DATA_ROOT
 Env file:        $ENV_FILE
 Tagger base URL: ${TAGGER_BASE_URL:-<not changed>}
-Remote registry: $REGISTRY
-Image tag:       $IMAGE_TAG
-Remote logger:   $REMOTE_LOGGER_IMAGE
-Remote processor:$REMOTE_PROCESSOR_IMAGE
-Local logger:    $LOCAL_LOGGER_IMAGE
-Local processor: $LOCAL_PROCESSOR_IMAGE
+Docker Hub namespace: $DOCKERHUB_NAMESPACE
+Image tag:            $IMAGE_TAG
+Remote logger:        $REMOTE_LOGGER_IMAGE
+Remote processor:     $REMOTE_PROCESSOR_IMAGE
+Local logger:         $LOCAL_LOGGER_IMAGE
+Local processor:      $LOCAL_PROCESSOR_IMAGE
 
 Next steps:
   1. Check CHAT_IMAGE_TAGGER_BASE_URL in $ENV_FILE
