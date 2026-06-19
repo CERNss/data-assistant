@@ -28,17 +28,15 @@ class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
             tagger=TaggerPipelineConfig(
                 enabled=True,
                 auto_run=auto_run,
-                python_bin="python",
-                tool_root=Path("/tmp/tool"),
-                entry_script=Path("main.py"),
-                config_file=Path("config.ini"),
+                base_url="http://tagger:8000",
+                threshold=0.5,
+                use_chinese_name=True,
+                top_k=20,
                 queue_file=Path("data/chat_image_tagger_queue.json"),
-                run_root=Path("data/chat_image_tagger_runs"),
                 audit_log_file=Path("data/group_image_tags.jsonl"),
                 batch_size=16,
                 timeout_sec=3600.0,
                 max_attempts=3,
-                keep_run_artifacts=False,
             ),
         )
 

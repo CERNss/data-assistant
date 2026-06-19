@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import shutil
-import subprocess
 import time
-import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from aiohttp import ClientError, ClientResponseError, ClientSession, ClientTimeout
 from loguru import logger
 
 from .audit import append_json_line
@@ -90,16 +88,42 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _archive_corrupt_queue(queue_file: Path) -> Path | None:
+    if not queue_file.exists():
+        return None
+    archive_path = queue_file.with_name(
+        f"{queue_file.name}.corrupt.{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
+    )
+    counter = 1
+    while archive_path.exists():
+        archive_path = queue_file.with_name(
+            f"{queue_file.name}.corrupt.{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.{counter}"
+        )
+        counter += 1
+    queue_file.replace(archive_path)
+    return archive_path
+
+
 def _load_queue(queue_file: Path) -> list[BatchItem]:
     if not queue_file.exists():
         return []
     try:
         payload = json.loads(queue_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        logger.warning("Invalid tagger queue file: {}", queue_file)
+        archive_path = _archive_corrupt_queue(queue_file)
+        logger.warning(
+            "Invalid tagger queue file archived: path={} archive_path={}",
+            queue_file,
+            archive_path,
+        )
         return []
     if not isinstance(payload, list):
-        logger.warning("Unexpected tagger queue payload type: {}", queue_file)
+        archive_path = _archive_corrupt_queue(queue_file)
+        logger.warning(
+            "Unexpected tagger queue payload archived: path={} archive_path={}",
+            queue_file,
+            archive_path,
+        )
         return []
     return [item for item in payload if isinstance(item, dict)]
 
@@ -112,6 +136,49 @@ def _save_queue(queue_file: Path, items: list[BatchItem]) -> None:
         encoding="utf-8",
     )
     tmp_file.replace(queue_file)
+
+
+def _inflight_file_for(queue_file: Path) -> Path:
+    return queue_file.with_suffix(queue_file.suffix + ".inflight")
+
+
+def _save_inflight(queue_file: Path, items: list[BatchItem]) -> None:
+    _save_queue(_inflight_file_for(queue_file), items)
+
+
+def _clear_inflight(queue_file: Path) -> None:
+    inflight_file = _inflight_file_for(queue_file)
+    if inflight_file.exists():
+        inflight_file.unlink()
+
+
+def _restore_inflight(queue_file: Path) -> None:
+    inflight_file = _inflight_file_for(queue_file)
+    inflight_items = _load_queue(inflight_file)
+    if not inflight_items:
+        _clear_inflight(queue_file)
+        return
+
+    queue_items = _load_queue(queue_file)
+    queued_paths = {
+        item.get("image_path")
+        for item in queue_items
+        if isinstance(item.get("image_path"), str)
+    }
+    restored_items = [
+        item
+        for item in inflight_items
+        if not isinstance(item.get("image_path"), str)
+        or item.get("image_path") not in queued_paths
+    ]
+    if restored_items:
+        _save_queue(queue_file, restored_items + queue_items)
+        logger.warning(
+            "Restored inflight tagger queue items: path={} count={}",
+            queue_file,
+            len(restored_items),
+        )
+    _clear_inflight(queue_file)
 
 
 def _append_tagger_audit(config: ChatImageConfig, payload: dict[str, Any]) -> None:
@@ -130,65 +197,127 @@ def _tail_text(text: str, limit: int = 800) -> str:
     return text[-limit:]
 
 
-def _resolve_tool_path(tool_root: Path, value: Path) -> Path:
-    if value.is_absolute():
-        return value
-    return (tool_root / value).resolve()
-
-
-def _build_tagger_command(config: ChatImageConfig, image_list_path: Path) -> list[str]:
+def _build_tagger_request_payload(
+    config: ChatImageConfig,
+    image_paths: list[str],
+) -> dict[str, Any]:
     tagger = config.tagger
-    if tagger.tool_root is None:
-        raise RuntimeError("CHAT_IMAGE_TAGGER_TOOL_ROOT is not configured")
-    entry_script = _resolve_tool_path(tagger.tool_root, tagger.entry_script)
-    cmd = [tagger.python_bin, str(entry_script), "--image_list", str(image_list_path)]
-    if tagger.config_file is not None:
-        cmd.extend(
-            ["--config", str(_resolve_tool_path(tagger.tool_root, tagger.config_file))]
-        )
-    return cmd
+    payload: dict[str, Any] = {"image_paths": image_paths}
+    if tagger.threshold is not None:
+        payload["threshold"] = tagger.threshold
+    if tagger.use_chinese_name is not None:
+        payload["use_chinese_name"] = tagger.use_chinese_name
+    if tagger.top_k is not None:
+        payload["top_k"] = tagger.top_k
+    return payload
 
 
-def _link_or_copy(source: Path, target: Path) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
+async def _post_tagger_batch(
+    *,
+    base_url: str,
+    payload: dict[str, Any],
+    timeout_sec: float,
+) -> dict[str, Any]:
+    timeout = ClientTimeout(total=timeout_sec)
+    response_text = ""
+
     try:
-        target.hardlink_to(source)
+        async with ClientSession(timeout=timeout) as session:
+            async with session.post(
+                f"{base_url}/tag/batch",
+                json=payload,
+            ) as response:
+                response_text = await response.text()
+                if response.status >= 400:
+                    raise RuntimeError(
+                        f"tagger http {response.status}: {_tail_text(response_text)}"
+                    )
+    except asyncio.TimeoutError as exc:
+        raise RuntimeError(f"tagger request timed out after {timeout_sec}s") from exc
+    except ClientResponseError as exc:
+        raise RuntimeError(f"tagger http {exc.status}: {exc.message}") from exc
+    except ClientError as exc:
+        raise RuntimeError(f"tagger request failed: {exc}") from exc
+
+    try:
+        payload_raw = json.loads(response_text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"invalid tagger response JSON: {exc}") from exc
+    if not isinstance(payload_raw, dict):
+        raise RuntimeError("invalid tagger response payload")
+    return payload_raw
+
+
+def _normalize_batch_result(
+    *,
+    item: BatchItem,
+    result_raw: Any,
+) -> BatchResult:
+    if not isinstance(result_raw, dict):
+        return {
+            "item": item,
+            "status": "failed",
+            "error": "invalid tagger response item",
+        }
+
+    if result_raw.get("success") is True:
+        raw_tags = result_raw.get("tags", [])
+        if not isinstance(raw_tags, list):
+            return {
+                "item": item,
+                "status": "failed",
+                "error": "tagger response tags is not a list",
+            }
+        tags: list[str] = []
+        for raw_tag in raw_tags:
+            if isinstance(raw_tag, dict):
+                name = str(raw_tag.get("name", "")).strip()
+            else:
+                name = str(raw_tag).strip()
+            if name:
+                tags.append(name)
+        return {
+            "item": item,
+            "status": "success",
+            "tags": tags,
+        }
+
+    error_type = str(result_raw.get("error_type") or "").strip()
+    error_message = str(result_raw.get("error") or "unknown tagger error")
+    if error_type:
+        error_message = f"{error_type}: {error_message}"
+    return {
+        "item": item,
+        "status": "failed",
+        "error": error_message,
+    }
+
+
+def _extract_result_image_path(result_raw: Any) -> str | None:
+    if not isinstance(result_raw, dict):
+        return None
+    image_path_raw = result_raw.get("image_path")
+    if not isinstance(image_path_raw, str) or not image_path_raw.strip():
+        return None
+    try:
+        return str(Path(image_path_raw.strip()).expanduser().resolve())
     except OSError:
-        shutil.copy2(source, target)
+        return image_path_raw.strip()
 
 
-def _run_subprocess(
-    cmd: list[str], cwd: Path, timeout_sec: float
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        cmd,
-        cwd=str(cwd),
-        text=True,
-        input="\n",
-        capture_output=True,
-        timeout=timeout_sec,
-        check=False,
-    )
-
-
-async def _run_external_tagger_batch(
+async def _run_http_tagger_batch(
     config: ChatImageConfig, batch_items: list[BatchItem]
 ) -> list[BatchResult]:
     tagger = config.tagger
-    if tagger.tool_root is None:
-        raise RuntimeError("CHAT_IMAGE_TAGGER_TOOL_ROOT is empty")
-
-    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid.uuid4().hex[:8]
-    run_dir = tagger.run_root / run_id
-    stage_root = run_dir / "stage"
-    image_list_path = run_dir / "image_list.txt"
-    stage_root.mkdir(parents=True, exist_ok=True)
+    if not tagger.base_url:
+        raise RuntimeError("CHAT_IMAGE_TAGGER_BASE_URL is empty")
 
     pre_failures: list[BatchResult] = []
-    staged: list[tuple[BatchItem, Path]] = []
+    ready_items: list[BatchItem] = []
+    request_image_paths: list[str] = []
 
-    for idx, item in enumerate(batch_items):
-        source_path = Path(str(item.get("image_path", "")))
+    for item in batch_items:
+        source_path = Path(str(item.get("image_path", ""))).expanduser()
         if not source_path.exists():
             pre_failures.append(
                 {
@@ -198,79 +327,63 @@ async def _run_external_tagger_batch(
                 }
             )
             continue
-        stage_dir = stage_root / f"{idx:05d}.info"
-        stage_name = source_path.name or f"image_{idx}{source_path.suffix or '.bin'}"
-        stage_image = stage_dir / stage_name
-        _link_or_copy(source_path, stage_image)
-        staged.append((item, stage_image))
+        if not source_path.is_file():
+            pre_failures.append(
+                {
+                    "item": item,
+                    "status": "failed",
+                    "error": f"path is not a file: {source_path}",
+                }
+            )
+            continue
+        ready_items.append(item)
+        request_image_paths.append(str(source_path.resolve()))
 
-    if not staged:
+    if not ready_items:
         return pre_failures
 
-    image_list_path.write_text(
-        "\n".join(str(stage_image.resolve()) for _, stage_image in staged) + "\n",
-        encoding="utf-8",
+    response_payload = await _post_tagger_batch(
+        base_url=tagger.base_url,
+        payload=_build_tagger_request_payload(config, request_image_paths),
+        timeout_sec=tagger.timeout_sec,
     )
+    raw_results = response_payload.get("results")
+    if not isinstance(raw_results, list):
+        raise RuntimeError("tagger response missing results list")
 
-    cmd = _build_tagger_command(config, image_list_path)
-    result_list: list[BatchResult] = []
-    try:
-        completed = await asyncio.to_thread(
-            _run_subprocess, cmd, tagger.tool_root, tagger.timeout_sec
+    if len(raw_results) != len(ready_items):
+        logger.warning(
+            "Tagger returned mismatched batch size: requested={} returned={}",
+            len(ready_items),
+            len(raw_results),
         )
-        if completed.returncode != 0:
-            message = (
-                f"tagger exited with code {completed.returncode}. "
-                f"stdout={_tail_text(completed.stdout)} stderr={_tail_text(completed.stderr)}"
-            )
-            raise RuntimeError(message)
 
-        for item, stage_image in staged:
-            metadata_file = stage_image.parent / "metadata.json"
-            if not metadata_file.exists():
-                result_list.append(
-                    {
-                        "item": item,
-                        "status": "failed",
-                        "error": f"metadata missing: {metadata_file}",
-                    }
-                )
-                continue
+    raw_results_by_path: dict[str, Any] = {}
+    unmatched_results: list[Any] = []
+    for result_raw in raw_results:
+        result_path = _extract_result_image_path(result_raw)
+        if result_path:
+            raw_results_by_path[result_path] = result_raw
+        else:
+            unmatched_results.append(result_raw)
 
-            try:
-                metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as exc:
-                result_list.append(
-                    {
-                        "item": item,
-                        "status": "failed",
-                        "error": f"invalid metadata JSON: {exc}",
-                    }
-                )
-                continue
-
-            raw_tags = metadata.get("tags", [])
-            if not isinstance(raw_tags, list):
-                result_list.append(
-                    {
-                        "item": item,
-                        "status": "failed",
-                        "error": "metadata.tags is not a list",
-                    }
-                )
-                continue
-            tags = [str(tag) for tag in raw_tags if str(tag).strip()]
+    result_list: list[BatchResult] = []
+    fallback_index = 0
+    for item, request_path in zip(ready_items, request_image_paths, strict=True):
+        result_raw = raw_results_by_path.get(request_path)
+        if result_raw is None and fallback_index < len(unmatched_results):
+            result_raw = unmatched_results[fallback_index]
+            fallback_index += 1
+        if result_raw is None:
             result_list.append(
                 {
                     "item": item,
-                    "status": "success",
-                    "tags": tags,
+                    "status": "failed",
+                    "error": "missing result from tagger service",
                 }
             )
-    finally:
-        if not tagger.keep_run_artifacts and run_dir.exists():
-            shutil.rmtree(run_dir, ignore_errors=True)
-
+            continue
+        result_list.append(_normalize_batch_result(item=item, result_raw=result_raw))
     return pre_failures + result_list
 
 
@@ -283,9 +396,9 @@ async def enqueue_image_for_tagging(
     tagger = config.tagger
     if not tagger.enabled:
         return
-    if tagger.tool_root is None:
+    if not tagger.base_url:
         logger.warning(
-            "Tagger is enabled but CHAT_IMAGE_TAGGER_TOOL_ROOT is not configured"
+            "Tagger is enabled but CHAT_IMAGE_TAGGER_BASE_URL is not configured"
         )
         return
 
@@ -335,6 +448,7 @@ async def enqueue_tagger_task_payload(
 def get_pending_tagger_count(config: ChatImageConfig) -> int:
     if not config.tagger.enabled:
         return 0
+    _restore_inflight(config.tagger.queue_file)
     return len(_load_queue(config.tagger.queue_file))
 
 
@@ -343,19 +457,21 @@ async def run_tagger_once(
 ) -> dict[str, int]:
     tagger = config.tagger
     summary = {"picked": 0, "success": 0, "failed": 0, "requeued": 0}
-    if not tagger.enabled or tagger.tool_root is None:
+    if not tagger.enabled or not tagger.base_url:
         return summary
 
     async with QUEUE_LOCK:
+        _restore_inflight(tagger.queue_file)
         queue_items = _load_queue(tagger.queue_file)
         if not queue_items:
             return summary
         batch_items = queue_items[: tagger.batch_size]
         queue_items = queue_items[tagger.batch_size :]
+        _save_inflight(tagger.queue_file, batch_items)
         _save_queue(tagger.queue_file, queue_items)
     summary["picked"] = len(batch_items)
 
-    runner_impl = runner or _run_external_tagger_batch
+    runner_impl = runner or _run_http_tagger_batch
     batch_started = time.perf_counter()
 
     with tracer.start_as_current_span(
@@ -452,6 +568,7 @@ async def run_tagger_once(
                 outcome="requeued", depth=len(requeue_items + queue_items)
             )
 
+    _clear_inflight(tagger.queue_file)
     _record_batch_metrics(summary=summary, started_at=batch_started)
 
     return summary

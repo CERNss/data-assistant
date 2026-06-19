@@ -3,7 +3,7 @@
 `data-assistant` is a two-service pipeline:
 
 - `logger_service`: receives NapCat OneBot11 events through reverse WebSocket, persists all events/images to PostgreSQL, and publishes image tagging tasks to NATS.
-- `processor_service`: consumes NATS tasks and runs Eagle_AItagger_byWD1.4.
+- `processor_service`: consumes NATS tasks and calls Eagle_AItagger_byWD1.4 over HTTP.
 
 ## Services
 
@@ -34,8 +34,16 @@ python -m pip install -r requirements.txt
 3. Prepare environment:
 
 ```bash
-cp .env.example .env
+./init.sh --tagger-base-url http://host.docker.internal:8000
 ```
+
+This will:
+
+- create runtime directories under `./.data/`
+- initialize queue/log files used by the processor/logger
+- copy `.env.example` to `.env` if needed
+- pull logger/processor images from the private registry and retag them locally for compose
+- set `CHAT_IMAGE_TAGGER_BASE_URL` in `.env` when you pass `--tagger-base-url`
 
 ## NapCat Reverse WebSocket
 
@@ -102,6 +110,21 @@ Stop:
 docker compose down
 ```
 
+## Image Publish Workflow
+
+Build and push service images to the private registry:
+
+```bash
+./build.sh all
+```
+
+On the deployment server:
+
+```bash
+./init.sh --tagger-base-url http://host.docker.internal:8000
+docker compose up -d
+```
+
 ## Database Persistence
 
 Logger persists to PostgreSQL:
@@ -124,8 +147,14 @@ Required env vars:
 
 ```env
 CHAT_IMAGE_TAGGER_ENABLED=true
-CHAT_IMAGE_TAGGER_TOOL_ROOT=/absolute/path/to/Eagle_AItagger_byWD1.4
+CHAT_IMAGE_TAGGER_BASE_URL=http://host.docker.internal:8000
 ```
+
+Recommended deployment pattern:
+
+- mount the shared host image directory into `logger`, `processor`, and Eagle tagger at the same container path: `/data/images`
+- let `logger` save downloaded images to `/data/images`
+- let `processor` send those same `/data/images/...` paths to `POST /tag/batch`
 
 NATS env vars:
 

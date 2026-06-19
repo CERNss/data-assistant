@@ -12,8 +12,8 @@ async def _run(once: bool) -> int:
     if not config.tagger.enabled:
         print("CHAT_IMAGE_TAGGER_ENABLED is false, skip tagging.")
         return 0
-    if config.tagger.tool_root is None:
-        print("CHAT_IMAGE_TAGGER_TOOL_ROOT is empty, skip tagging.")
+    if not config.tagger.base_url:
+        print("CHAT_IMAGE_TAGGER_BASE_URL is empty, skip tagging.")
         return 1
 
     pending_before = get_pending_tagger_count(config)

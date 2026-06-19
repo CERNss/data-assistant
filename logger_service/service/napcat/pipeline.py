@@ -574,6 +574,32 @@ async def _process_image(
             image_id,
             db_exc,
         )
+        append_json_line(
+            chat_config.audit_log_file,
+            {
+                "logged_at": datetime.now(UTC).isoformat(),
+                "event_id": event_id,
+                "image_id": image_id,
+                "seq": image.seq,
+                "url": active_url,
+                "status": "db_update_failed",
+                "local_path": str(save_path),
+                "size": len(raw_bytes),
+                "hash_sha256": hash_sha256,
+                "format": fmt,
+                "download_attempt": max(1, total_attempt_count),
+                "error": str(db_exc),
+                "refresh": _refresh_trace_payload(refresh_result)
+                if refresh_result is not None
+                else None,
+            },
+        )
+        _record_image_metrics(
+            outcome="db_update_failed",
+            transfer_mode=transfer_mode,
+            started_at=process_started_at,
+        )
+        return
 
     append_json_line(
         chat_config.audit_log_file,

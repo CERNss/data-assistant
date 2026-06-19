@@ -225,8 +225,8 @@ async def _run(
     if not config.tagger.enabled:
         print("CHAT_IMAGE_TAGGER_ENABLED is false, tagger worker will not start.")
         return 1
-    if config.tagger.tool_root is None:
-        print("CHAT_IMAGE_TAGGER_TOOL_ROOT is empty, tagger worker will not start.")
+    if not config.tagger.base_url:
+        print("CHAT_IMAGE_TAGGER_BASE_URL is empty, tagger worker will not start.")
         return 1
     if not config.nats.enabled:
         print("CHAT_IMAGE_NATS_ENABLED is false, tagger worker will not start.")

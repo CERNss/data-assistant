@@ -139,6 +139,82 @@ class TestProcessImageMissingUrl(unittest.IsolatedAsyncioTestCase):
             )
             mock_append.assert_called_once()
 
+    async def test_success_db_update_failure_does_not_publish_nats(self) -> None:
+        image = ImageSegment(
+            seq=0,
+            url_raw="https://example.com/a.jpg",
+            url_decoded="https://example.com/a.jpg",
+            file_name="a.jpg",
+            sub_type=None,
+            file_size=None,
+            summary=None,
+            raw_segment={"type": "image", "data": {"url": "https://example.com/a.jpg"}},
+        )
+        event = _event_with_image(image)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            chat_config = SimpleNamespace(
+                audit_log_file=Path(tmp) / "audit.jsonl",
+                nats=SimpleNamespace(enabled=True, subject="t"),
+                retry_count=3,
+                save_root=Path(tmp),
+            )
+            pool = SimpleNamespace(fetchrow=AsyncMock(return_value=None))
+
+            with (
+                patch(
+                    "logger_service.service.persistence.repository.insert_image",
+                    new_callable=AsyncMock,
+                    return_value=42,
+                ),
+                patch(
+                    "logger_service.service.chat_image.downloader.download_image_with_retry",
+                    new_callable=AsyncMock,
+                    return_value=(
+                        SimpleNamespace(
+                            body=b"not-really-an-image",
+                            content_type="image/jpeg",
+                            content_length=19,
+                        ),
+                        1,
+                    ),
+                ),
+                patch(
+                    "logger_service.service.persistence.db.get_pool",
+                    return_value=pool,
+                ),
+                patch(
+                    "logger_service.service.persistence.repository.update_image_download_success",
+                    new_callable=AsyncMock,
+                    side_effect=RuntimeError("db down"),
+                ),
+                patch(
+                    "logger_service.service.chat_image.nats_publisher.publish_tagger_task_with_result",
+                    new_callable=AsyncMock,
+                ) as mock_publish,
+                patch(
+                    "logger_service.service.persistence.repository.insert_nats_dispatch",
+                    new_callable=AsyncMock,
+                ) as mock_insert_dispatch,
+                patch(
+                    "logger_service.service.chat_image.audit.append_json_line"
+                ) as mock_append,
+            ):
+                await _process_image(
+                    event_id=10,
+                    event=event,
+                    image=image,
+                    chat_config=chat_config,
+                    napcat_config=_napcat_config(),
+                )
+
+            mock_publish.assert_not_awaited()
+            mock_insert_dispatch.assert_not_awaited()
+            mock_append.assert_called_once()
+            audit_payload = mock_append.call_args.args[1]
+            self.assertEqual(audit_payload["status"], "db_update_failed")
+            self.assertEqual(audit_payload["image_id"], 42)
+
 
 def _base_event(
     *,

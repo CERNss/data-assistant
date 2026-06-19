@@ -43,21 +43,53 @@ def _env_float(name: str, default: float, *, minimum: float = 0.0) -> float:
     return max(minimum, parsed)
 
 
+def _env_optional_bool(name: str) -> bool | None:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return None
+    normalized = raw_value.strip().lower()
+    if normalized in TRUE_VALUES:
+        return True
+    if normalized in FALSE_VALUES:
+        return False
+    return None
+
+
+def _env_optional_int(name: str, *, minimum: int = 1) -> int | None:
+    raw_value = os.getenv(name)
+    if raw_value is None or not raw_value.strip():
+        return None
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return None
+    return max(minimum, parsed)
+
+
+def _env_optional_float(name: str, *, minimum: float = 0.0) -> float | None:
+    raw_value = os.getenv(name)
+    if raw_value is None or not raw_value.strip():
+        return None
+    try:
+        parsed = float(raw_value)
+    except ValueError:
+        return None
+    return max(minimum, parsed)
+
+
 @dataclass(frozen=True)
 class TaggerPipelineConfig:
     enabled: bool
     auto_run: bool
-    python_bin: str
-    tool_root: Path | None
-    entry_script: Path
-    config_file: Path | None
+    base_url: str | None
+    threshold: float | None
+    use_chinese_name: bool | None
+    top_k: int | None
     queue_file: Path
-    run_root: Path
     audit_log_file: Path
     batch_size: int
     timeout_sec: float
     max_attempts: int
-    keep_run_artifacts: bool
 
 
 @dataclass(frozen=True)
@@ -78,8 +110,7 @@ class ChatImageConfig:
 
 
 def load_chat_image_config() -> ChatImageConfig:
-    tagger_tool_root = os.getenv("CHAT_IMAGE_TAGGER_TOOL_ROOT", "").strip()
-    tagger_config = os.getenv("CHAT_IMAGE_TAGGER_CONFIG", "config.ini").strip()
+    tagger_base_url = os.getenv("CHAT_IMAGE_TAGGER_BASE_URL", "").strip()
     raw_nats_servers = os.getenv("CHAT_IMAGE_NATS_SERVERS", "nats://127.0.0.1:4222")
     nats_servers = tuple(v.strip() for v in raw_nats_servers.split(",") if v.strip())
     return ChatImageConfig(
@@ -111,18 +142,14 @@ def load_chat_image_config() -> ChatImageConfig:
         tagger=TaggerPipelineConfig(
             enabled=_env_bool("CHAT_IMAGE_TAGGER_ENABLED", False),
             auto_run=_env_bool("CHAT_IMAGE_TAGGER_AUTO_RUN", False),
-            python_bin=os.getenv("CHAT_IMAGE_TAGGER_PYTHON", "python").strip()
-            or "python",
-            tool_root=Path(tagger_tool_root).expanduser() if tagger_tool_root else None,
-            entry_script=Path(os.getenv("CHAT_IMAGE_TAGGER_ENTRY_SCRIPT", "main.py")),
-            config_file=Path(tagger_config) if tagger_config else None,
+            base_url=tagger_base_url.rstrip("/") or None,
+            threshold=_env_optional_float("CHAT_IMAGE_TAGGER_THRESHOLD", minimum=0.0),
+            use_chinese_name=_env_optional_bool("CHAT_IMAGE_TAGGER_USE_CHINESE_NAME"),
+            top_k=_env_optional_int("CHAT_IMAGE_TAGGER_TOP_K", minimum=1),
             queue_file=Path(
                 os.getenv(
                     "CHAT_IMAGE_TAGGER_QUEUE_FILE", "data/chat_image_tagger_queue.json"
                 )
-            ),
-            run_root=Path(
-                os.getenv("CHAT_IMAGE_TAGGER_RUN_ROOT", "data/chat_image_tagger_runs")
             ),
             audit_log_file=Path(
                 os.getenv(
@@ -134,6 +161,5 @@ def load_chat_image_config() -> ChatImageConfig:
                 "CHAT_IMAGE_TAGGER_TIMEOUT_SEC", 3600.0, minimum=1.0
             ),
             max_attempts=_env_int("CHAT_IMAGE_TAGGER_MAX_ATTEMPTS", 3, minimum=1),
-            keep_run_artifacts=_env_bool("CHAT_IMAGE_TAGGER_KEEP_RUN_ARTIFACTS", False),
         ),
     )

@@ -62,25 +62,25 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     networks:
       - data-assistant-net
 
   processor:
-    build:
-      context: .
-      dockerfile: processor_service/Dockerfile
+    image: "data-assistant-processor:${IMAGE_TAG:-latest}"
+    pull_policy: never
     env_file:
       - .env
     environment:
       CHAT_IMAGE_NATS_ENABLED: "true"
       CHAT_IMAGE_NATS_SERVERS: "nats://nats:4222"
       CHAT_IMAGE_TAGGER_ENABLED: "true"
-      CHAT_IMAGE_TAGGER_TOOL_ROOT: "/opt/tagger"
-      CHAT_IMAGE_SAVE_DIR: "/app/data/chat_images"
-      GROUP_IMAGE_SAVE_DIR: "/app/data/chat_images"
+      CHAT_IMAGE_TAGGER_BASE_URL: "${CHAT_IMAGE_TAGGER_BASE_URL:-http://host.docker.internal:8000}"
+      CHAT_IMAGE_SAVE_DIR: "/data/images"
+      GROUP_IMAGE_SAVE_DIR: "/data/images"
       CHAT_IMAGE_TAGGER_QUEUE_FILE: "/app/data/chat_image_tagger_queue.json"
-      CHAT_IMAGE_TAGGER_RUN_ROOT: "/app/data/chat_image_tagger_runs"
       CHAT_IMAGE_TAGGER_AUDIT_LOG_FILE: "/app/data/group_image_tags.jsonl"
       OTEL_ENABLED: "true"
       OTEL_SERVICE_NAME: "data-assistant-processor"
@@ -88,7 +88,7 @@ services:
       OTEL_EXPORTER_OTLP_INSECURE: "true"
     volumes:
       - ./.data/chat:/app/data
-      - ${CHAT_IMAGE_TAGGER_TOOL_ROOT_HOST:?set CHAT_IMAGE_TAGGER_TOOL_ROOT_HOST in .env}:/opt/tagger:ro
+      - ./.data/chat/chat_images:/data/images
     depends_on:
       fluent-bit:
         condition: service_healthy
@@ -106,14 +106,15 @@ services:
         tag: "docker.processor-service"
         fluentd-async: "true"
         fluentd-buffer-limit: "8388608"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     networks:
       - data-assistant-net
 
   logger:
-    build:
-      context: .
-      dockerfile: logger_service/Dockerfile
+    image: "data-assistant-logger:${IMAGE_TAG:-latest}"
+    pull_policy: never
     env_file:
       - .env
     environment:
@@ -123,8 +124,8 @@ services:
       CHAT_IMAGE_NATS_ENABLED: "true"
       CHAT_IMAGE_NATS_SERVERS: "nats://nats:4222"
       CHAT_IMAGE_TAGGER_ENABLED: "false"
-      CHAT_IMAGE_SAVE_DIR: "/app/data/chat_images"
-      GROUP_IMAGE_SAVE_DIR: "/app/data/chat_images"
+      CHAT_IMAGE_SAVE_DIR: "/data/images"
+      GROUP_IMAGE_SAVE_DIR: "/data/images"
       OTEL_ENABLED: "true"
       OTEL_SERVICE_NAME: "data-assistant-logger"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://host.docker.internal:4317"
@@ -134,6 +135,7 @@ services:
       - "8082:8082"
     volumes:
       - ./.data/chat:/app/data
+      - ./.data/chat/chat_images:/data/images
     depends_on:
       fluent-bit:
         condition: service_healthy
@@ -153,6 +155,8 @@ services:
         tag: "docker.logger-service"
         fluentd-async: "true"
         fluentd-buffer-limit: "8388608"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     networks:
       - data-assistant-net

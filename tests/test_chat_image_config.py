@@ -103,8 +103,10 @@ class TestProcessorChatImageConfig(unittest.TestCase):
         self.assertEqual(cfg.nats.connect_timeout_sec, 5.0)
         self.assertFalse(cfg.tagger.enabled)
         self.assertFalse(cfg.tagger.auto_run)
-        self.assertEqual(cfg.tagger.python_bin, "python")
-        self.assertIsNone(cfg.tagger.tool_root)
+        self.assertIsNone(cfg.tagger.base_url)
+        self.assertIsNone(cfg.tagger.threshold)
+        self.assertIsNone(cfg.tagger.use_chinese_name)
+        self.assertIsNone(cfg.tagger.top_k)
 
 
 if __name__ == "__main__":
