@@ -93,5 +93,4 @@ secrets.*
 # =========================
 # Local agent tooling
 # =========================
-.agents/
 .opencode/
