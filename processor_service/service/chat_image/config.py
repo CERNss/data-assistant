@@ -162,9 +162,9 @@ def load_chat_image_config() -> ChatImageConfig:
             or "CHAT_IMAGE_TAGGER_TASKS",
             stream_subjects=stream_subjects,
             durable_name=os.getenv(
-                "CHAT_IMAGE_NATS_DURABLE", "chat-image-tagger-worker"
+                "CHAT_IMAGE_NATS_DURABLE", "chat-image-tagger-workers"
             ).strip()
-            or "chat-image-tagger-worker",
+            or "chat-image-tagger-workers",
             ack_wait_sec=_env_float("CHAT_IMAGE_NATS_ACK_WAIT_SEC", 120.0, minimum=1.0),
             max_deliver=_env_int("CHAT_IMAGE_NATS_MAX_DELIVER", 10, minimum=1),
         ),

@@ -242,6 +242,11 @@ async def _run(
     if not config.nats.enabled:
         print("CHAT_IMAGE_NATS_ENABLED is false, tagger worker will not start.")
         return 1
+    try:
+        _validate_jetstream_queue_config(config)
+    except ValueError as exc:
+        print(str(exc))
+        return 1
 
     try:
         import nats  # type: ignore
@@ -322,6 +327,18 @@ async def _run(
             pass
         await nc.drain()
     return 0
+
+
+def _validate_jetstream_queue_config(config: ChatImageConfig) -> None:
+    if (
+        config.nats.jetstream_enabled
+        and config.nats.queue_group
+        and config.nats.durable_name != config.nats.queue_group
+    ):
+        raise ValueError(
+            "CHAT_IMAGE_NATS_DURABLE must equal CHAT_IMAGE_NATS_QUEUE_GROUP "
+            "when JetStream queue subscriptions are enabled."
+        )
 
 
 def _build_consumer_config(config: ChatImageConfig) -> Any:

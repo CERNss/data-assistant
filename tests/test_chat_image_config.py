@@ -116,7 +116,7 @@ class TestProcessorChatImageConfig(unittest.TestCase):
         self.assertTrue(cfg.nats.jetstream_enabled)
         self.assertEqual(cfg.nats.stream_name, "CHAT_IMAGE_TAGGER_TASKS")
         self.assertEqual(cfg.nats.stream_subjects, ("chat.image.tagger.task",))
-        self.assertEqual(cfg.nats.durable_name, "chat-image-tagger-worker")
+        self.assertEqual(cfg.nats.durable_name, "chat-image-tagger-workers")
         self.assertEqual(cfg.nats.ack_wait_sec, 120.0)
         self.assertEqual(cfg.nats.max_deliver, 10)
         self.assertFalse(cfg.tagger.enabled)

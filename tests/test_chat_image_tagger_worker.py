@@ -32,7 +32,7 @@ class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
                 jetstream_enabled=True,
                 stream_name="CHAT_IMAGE_TAGGER_TASKS",
                 stream_subjects=("chat.image.tagger.task",),
-                durable_name="chat-image-tagger-worker",
+                durable_name="chat-image-tagger-workers",
                 ack_wait_sec=120.0,
                 max_deliver=10,
             ),
@@ -253,13 +253,49 @@ class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
 
             consumer_config = _build_consumer_config(config)
 
-        self.assertEqual(consumer_config.durable_name, "chat-image-tagger-worker")
+        self.assertEqual(consumer_config.durable_name, "chat-image-tagger-workers")
         self.assertEqual(consumer_config.deliver_policy, "all")
         self.assertEqual(consumer_config.ack_policy, "explicit")
         self.assertEqual(consumer_config.ack_wait, 120.0)
         self.assertEqual(consumer_config.max_deliver, 10)
         self.assertEqual(consumer_config.filter_subject, "chat.image.tagger.task")
         self.assertEqual(consumer_config.deliver_group, "chat-image-tagger-workers")
+
+    def test_validate_jetstream_queue_config_rejects_durable_mismatch(self) -> None:
+        config = self._build_config(auto_run=False)
+        config = ChatImageConfig(
+            save_root=config.save_root,
+            nats=replace(config.nats, durable_name="chat-image-tagger-worker"),
+            tagger=config.tagger,
+        )
+
+        from processor_service.service.chat_image.tagger_worker import (
+            _validate_jetstream_queue_config,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "CHAT_IMAGE_NATS_DURABLE must equal CHAT_IMAGE_NATS_QUEUE_GROUP",
+        ):
+            _validate_jetstream_queue_config(config)
+
+    def test_validate_jetstream_queue_config_allows_core_nats_mismatch(self) -> None:
+        config = self._build_config(auto_run=False)
+        config = ChatImageConfig(
+            save_root=config.save_root,
+            nats=replace(
+                config.nats,
+                jetstream_enabled=False,
+                durable_name="chat-image-tagger-worker",
+            ),
+            tagger=config.tagger,
+        )
+
+        from processor_service.service.chat_image.tagger_worker import (
+            _validate_jetstream_queue_config,
+        )
+
+        _validate_jetstream_queue_config(config)
 
     async def test_ensure_jetstream_stream_adds_missing_stream(self) -> None:
         config = self._build_config(auto_run=False)

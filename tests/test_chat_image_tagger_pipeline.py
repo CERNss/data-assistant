@@ -36,7 +36,7 @@ class TestChatImageTaggerPipeline(unittest.IsolatedAsyncioTestCase):
                 jetstream_enabled=True,
                 stream_name="CHAT_IMAGE_TAGGER_TASKS",
                 stream_subjects=("chat.image.tagger.task",),
-                durable_name="chat-image-tagger-worker",
+                durable_name="chat-image-tagger-workers",
                 ack_wait_sec=120.0,
                 max_deliver=10,
             ),
