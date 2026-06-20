@@ -54,6 +54,9 @@ class NatsTaskBusConfig:
     jetstream_enabled: bool
     stream_name: str
     stream_subjects: tuple[str, ...]
+    stream_max_age_sec: float = 604800.0
+    stream_max_bytes: int = -1
+    stream_max_msgs: int = -1
 
 
 @dataclass(frozen=True)
@@ -122,6 +125,15 @@ def load_chat_image_config() -> ChatImageConfig:
             ).strip()
             or "CHAT_IMAGE_TAGGER_TASKS",
             stream_subjects=stream_subjects,
+            stream_max_age_sec=_env_float(
+                "CHAT_IMAGE_NATS_STREAM_MAX_AGE_SEC", 604800.0, minimum=0.0
+            ),
+            stream_max_bytes=_env_int(
+                "CHAT_IMAGE_NATS_STREAM_MAX_BYTES", -1, minimum=-1
+            ),
+            stream_max_msgs=_env_int(
+                "CHAT_IMAGE_NATS_STREAM_MAX_MSGS", -1, minimum=-1
+            ),
         ),
         outbox=OutboxRelayConfig(
             enabled=_env_bool("CHAT_IMAGE_NATS_OUTBOX_RELAY_ENABLED", True),

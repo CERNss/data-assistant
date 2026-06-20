@@ -108,6 +108,10 @@ class NatsTaskBusConfig:
     durable_name: str
     ack_wait_sec: float
     max_deliver: int
+    nak_delay_sec: float = 5.0
+    stream_max_age_sec: float = 604800.0
+    stream_max_bytes: int = -1
+    stream_max_msgs: int = -1
 
 
 @dataclass(frozen=True)
@@ -167,6 +171,18 @@ def load_chat_image_config() -> ChatImageConfig:
             or "chat-image-tagger-workers",
             ack_wait_sec=_env_float("CHAT_IMAGE_NATS_ACK_WAIT_SEC", 120.0, minimum=1.0),
             max_deliver=_env_int("CHAT_IMAGE_NATS_MAX_DELIVER", 10, minimum=1),
+            nak_delay_sec=_env_float(
+                "CHAT_IMAGE_NATS_NAK_DELAY_SEC", 5.0, minimum=0.0
+            ),
+            stream_max_age_sec=_env_float(
+                "CHAT_IMAGE_NATS_STREAM_MAX_AGE_SEC", 604800.0, minimum=0.0
+            ),
+            stream_max_bytes=_env_int(
+                "CHAT_IMAGE_NATS_STREAM_MAX_BYTES", -1, minimum=-1
+            ),
+            stream_max_msgs=_env_int(
+                "CHAT_IMAGE_NATS_STREAM_MAX_MSGS", -1, minimum=-1
+            ),
         ),
         tagger=TaggerPipelineConfig(
             enabled=_env_bool("CHAT_IMAGE_TAGGER_ENABLED", False),

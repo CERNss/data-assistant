@@ -226,6 +226,28 @@ def _record_message_metrics(
         MESSAGE_LATENCY_MS.record(latency_ms, attributes)
 
 
+# Worker liveness for /health: a worker that is alive but has lost its NATS
+# subscription is silently doing no work. The health probe reads this so the
+# orchestrator can restart it (see processor health server).
+_NATS_LIVENESS = {"required": False, "connected": False}
+
+
+def reset_nats_liveness(*, required: bool) -> None:
+    _NATS_LIVENESS["required"] = required
+    _NATS_LIVENESS["connected"] = False
+
+
+def set_nats_connected(connected: bool) -> None:
+    _NATS_LIVENESS["connected"] = connected
+
+
+def worker_is_healthy() -> bool:
+    """True unless a required NATS link is currently down."""
+    if not _NATS_LIVENESS["required"]:
+        return True
+    return bool(_NATS_LIVENESS["connected"])
+
+
 def _make_nats_lifecycle_callbacks(
     shutdown_event: asyncio.Event, nats_closed: asyncio.Event
 ) -> tuple[Any, Any, Any, Any]:
@@ -240,12 +262,15 @@ def _make_nats_lifecycle_callbacks(
         logger.warning("NATS worker connection error: {}", exc)
 
     async def _on_disconnected() -> None:
+        set_nats_connected(False)
         logger.warning("NATS worker disconnected; reconnecting...")
 
     async def _on_reconnected() -> None:
+        set_nats_connected(True)
         logger.info("NATS worker reconnected")
 
     async def _on_closed() -> None:
+        set_nats_connected(False)
         if shutdown_event.is_set():
             return
         logger.error("NATS worker connection closed permanently; requesting restart")
@@ -303,12 +328,16 @@ async def _run(
         reconnected_cb=on_nats_reconnected,
         closed_cb=on_nats_closed,
     )
+    reset_nats_liveness(required=True)
+    set_nats_connected(True)
 
     async def _on_message(msg: Any) -> None:
         success = await _process_tagger_task_message(
             config=config, data=msg.data, subject=msg.subject
         )
-        await _ack_or_nak_message(msg, success=success)
+        await _ack_or_nak_message(
+            msg, success=success, nak_delay_sec=config.nats.nak_delay_sec
+        )
 
     if config.nats.jetstream_enabled:
         js = nc.jetstream()
@@ -378,6 +407,9 @@ async def _run(
                 await nc.drain()
             except Exception as exc:
                 logger.warning("Failed to drain NATS worker: {}", exc)
+        # Worker is no longer serving; clear liveness so a not-running worker
+        # isn't reported as a required-but-down link.
+        reset_nats_liveness(required=False)
     # Non-zero exit when NATS closed under us, so the orchestrator restarts the
     # worker instead of leaving it parked without a live subscription.
     return 1 if nats_closed.is_set() else 0
@@ -418,6 +450,14 @@ async def _ensure_jetstream_stream(config: ChatImageConfig, js: Any) -> None:
     except Exception as exc:
         raise RuntimeError("nats-py JetStream API is required") from exc
 
+    max_age = (
+        config.nats.stream_max_age_sec
+        if config.nats.stream_max_age_sec > 0
+        else None
+    )
+    max_bytes = config.nats.stream_max_bytes
+    max_msgs = config.nats.stream_max_msgs
+
     desired_subjects = list(config.nats.stream_subjects)
     try:
         stream_info = await js.stream_info(config.nats.stream_name)
@@ -428,26 +468,48 @@ async def _ensure_jetstream_stream(config: ChatImageConfig, js: Any) -> None:
                 subjects=desired_subjects,
                 retention=RetentionPolicy.LIMITS,
                 storage=StorageType.FILE,
+                max_age=max_age,
+                max_bytes=max_bytes,
+                max_msgs=max_msgs,
             )
         )
         logger.info(
-            "Created JetStream stream: stream={} subjects={}",
+            "Created JetStream stream: stream={} subjects={} max_age_sec={} "
+            "max_bytes={} max_msgs={}",
             config.nats.stream_name,
             ",".join(config.nats.stream_subjects),
+            max_age,
+            max_bytes,
+            max_msgs,
         )
     else:
-        existing_subjects = list(getattr(stream_info.config, "subjects", []) or [])
+        stream_config = stream_info.config
+        existing_subjects = list(getattr(stream_config, "subjects", []) or [])
         missing_subjects = [
             subject for subject in desired_subjects if subject not in existing_subjects
         ]
+        needs_update = False
         if missing_subjects:
-            stream_config = stream_info.config
             stream_config.subjects = [*existing_subjects, *missing_subjects]
+            needs_update = True
+        if getattr(stream_config, "max_age", None) != max_age:
+            stream_config.max_age = max_age
+            needs_update = True
+        if getattr(stream_config, "max_bytes", None) != max_bytes:
+            stream_config.max_bytes = max_bytes
+            needs_update = True
+        if getattr(stream_config, "max_msgs", None) != max_msgs:
+            stream_config.max_msgs = max_msgs
+            needs_update = True
+        if needs_update:
             await js.update_stream(config=stream_config)
             logger.info(
-                "Updated JetStream stream subjects: stream={} added_subjects={}",
+                "Reconciled JetStream stream: stream={} max_age_sec={} "
+                "max_bytes={} max_msgs={}",
                 config.nats.stream_name,
-                ",".join(missing_subjects),
+                max_age,
+                max_bytes,
+                max_msgs,
             )
 
 
@@ -502,7 +564,9 @@ async def _is_tagger_healthy(config: ChatImageConfig) -> bool:
         return False
 
 
-async def _ack_or_nak_message(msg: Any, *, success: bool) -> None:
+async def _ack_or_nak_message(
+    msg: Any, *, success: bool, nak_delay_sec: float = 0.0
+) -> None:
     try:
         metadata = getattr(msg, "metadata", None)
     except Exception:
@@ -512,6 +576,10 @@ async def _ack_or_nak_message(msg: Any, *, success: bool) -> None:
     try:
         if success:
             await msg.ack()
+        elif nak_delay_sec > 0:
+            # Back off before redelivery so a poison/transient failure does not
+            # hot-loop the tagger up to max_deliver times.
+            await msg.nak(delay=nak_delay_sec)
         else:
             await msg.nak()
     except Exception as exc:

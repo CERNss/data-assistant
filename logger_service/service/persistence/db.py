@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import asyncpg
@@ -125,10 +126,42 @@ CREATE INDEX IF NOT EXISTS idx_onebot_nats_status_created
 
 async def init_db(config: PostgresConfig) -> None:
     global _pool
-    _pool = await asyncpg.create_pool(config.dsn, min_size=2, max_size=10)
+    _pool = await _create_pool_with_retry(config)
     async with _pool.acquire() as conn:
         await _run_ddl(conn)
     logger.info("PostgreSQL pool initialized: dsn={}", config.dsn)
+
+
+async def _create_pool_with_retry(config: PostgresConfig) -> asyncpg.Pool:
+    """Create the pool, retrying so the logger survives a not-yet-ready DB.
+
+    Postgres frequently isn't accepting connections the instant the logger
+    boots (compose starts them together). Retry with a fixed backoff instead of
+    crash-looping the whole process.
+    """
+    last_error: Exception | None = None
+    for attempt in range(1, config.connect_max_attempts + 1):
+        try:
+            return await asyncpg.create_pool(
+                config.dsn,
+                min_size=config.pool_min_size,
+                max_size=config.pool_max_size,
+                command_timeout=config.command_timeout_sec or None,
+            )
+        except Exception as exc:
+            last_error = exc
+            if attempt >= config.connect_max_attempts:
+                break
+            logger.warning(
+                "PostgreSQL not ready (attempt {}/{}): {}; retrying in {}s",
+                attempt,
+                config.connect_max_attempts,
+                exc,
+                config.connect_retry_delay_sec,
+            )
+            await asyncio.sleep(config.connect_retry_delay_sec)
+    assert last_error is not None
+    raise last_error
 
 
 def get_pool() -> asyncpg.Pool:

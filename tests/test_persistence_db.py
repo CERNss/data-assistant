@@ -40,5 +40,50 @@ class TestPersistenceDbInit(unittest.IsolatedAsyncioTestCase):
         self.assertIn("idx_onebot_messages_event_time", ddl_sql)
 
 
+class TestCreatePoolWithRetry(unittest.IsolatedAsyncioTestCase):
+    async def test_retries_then_succeeds(self) -> None:
+        from logger_service.service.persistence.db import _create_pool_with_retry
+
+        pool = MagicMock()
+        create = AsyncMock(side_effect=[OSError("not ready"), pool])
+        with (
+            patch(
+                "logger_service.service.persistence.db.asyncpg.create_pool", new=create
+            ),
+            patch(
+                "logger_service.service.persistence.db.asyncio.sleep", new=AsyncMock()
+            ),
+        ):
+            result = await _create_pool_with_retry(
+                PostgresConfig(
+                    dsn="postgresql://x",
+                    connect_max_attempts=3,
+                    connect_retry_delay_sec=0.0,
+                )
+            )
+
+        self.assertIs(result, pool)
+        self.assertEqual(create.await_count, 2)
+
+    async def test_raises_after_max_attempts(self) -> None:
+        from logger_service.service.persistence.db import _create_pool_with_retry
+
+        create = AsyncMock(side_effect=OSError("never ready"))
+        with (
+            patch(
+                "logger_service.service.persistence.db.asyncpg.create_pool", new=create
+            ),
+            patch(
+                "logger_service.service.persistence.db.asyncio.sleep", new=AsyncMock()
+            ),
+        ):
+            with self.assertRaises(OSError):
+                await _create_pool_with_retry(
+                    PostgresConfig(dsn="postgresql://x", connect_max_attempts=2)
+                )
+
+        self.assertEqual(create.await_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

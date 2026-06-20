@@ -85,5 +85,29 @@ class TestProcessorMainIntegration(unittest.TestCase):
         mock_run.assert_called_once()
 
 
+class TestProcessorHealthReflectsWorkerLiveness(unittest.IsolatedAsyncioTestCase):
+    def tearDown(self) -> None:
+        from processor_service.service.chat_image import tagger_worker
+
+        tagger_worker.reset_nats_liveness(required=False)
+
+    async def test_returns_503_when_nats_disconnected(self) -> None:
+        from processor_service.service.chat_image import tagger_worker
+        from processor_service.service.health import _health_handler
+
+        tagger_worker.reset_nats_liveness(required=True)
+        resp = await _health_handler(None)
+        self.assertEqual(resp.status, 503)
+
+    async def test_returns_200_when_nats_connected(self) -> None:
+        from processor_service.service.chat_image import tagger_worker
+        from processor_service.service.health import _health_handler
+
+        tagger_worker.reset_nats_liveness(required=True)
+        tagger_worker.set_nats_connected(True)
+        resp = await _health_handler(None)
+        self.assertEqual(resp.status, 200)
+
+
 if __name__ == "__main__":
     unittest.main()

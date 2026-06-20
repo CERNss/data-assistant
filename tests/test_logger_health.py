@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
@@ -59,6 +61,32 @@ class TestLoggerHealthDoesNotAffectOtherRoutes(AioHTTPTestCase):
 
     async def test_health_still_works_alongside_ws(self) -> None:
         resp = await self.client.request("GET", "/health")
+        self.assertEqual(resp.status, 200)
+
+
+class TestLoggerHealthDbProbe(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_503_when_db_probe_fails(self) -> None:
+        pool = SimpleNamespace(fetchval=AsyncMock(side_effect=RuntimeError("db down")))
+        with patch(
+            "logger_service.service.persistence.db.get_pool", return_value=pool
+        ):
+            resp = await _health_handler(None)
+        self.assertEqual(resp.status, 503)
+
+    async def test_returns_200_when_db_probe_ok(self) -> None:
+        pool = SimpleNamespace(fetchval=AsyncMock(return_value=1))
+        with patch(
+            "logger_service.service.persistence.db.get_pool", return_value=pool
+        ):
+            resp = await _health_handler(None)
+        self.assertEqual(resp.status, 200)
+
+    async def test_returns_200_when_pool_uninitialized(self) -> None:
+        with patch(
+            "logger_service.service.persistence.db.get_pool",
+            side_effect=RuntimeError("not initialized"),
+        ):
+            resp = await _health_handler(None)
         self.assertEqual(resp.status, 200)
 
 

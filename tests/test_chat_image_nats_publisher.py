@@ -174,6 +174,9 @@ class TestChatImageNatsPublisher(unittest.IsolatedAsyncioTestCase):
         stream_config = js.add_stream.await_args.kwargs["config"]
         self.assertEqual(stream_config.name, "CHAT_IMAGE_TAGGER_TASKS")
         self.assertEqual(stream_config.subjects, ["chat.image.tagger.task"])
+        self.assertEqual(stream_config.max_age, 604800.0)
+        self.assertEqual(stream_config.max_bytes, -1)
+        self.assertEqual(stream_config.max_msgs, -1)
         js.update_stream.assert_not_awaited()
 
     async def test_ensure_stream_updates_missing_subjects(self) -> None:

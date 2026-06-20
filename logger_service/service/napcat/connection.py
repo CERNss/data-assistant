@@ -98,6 +98,23 @@ def _set_action_client(client: OneBotActionClient | None) -> None:
 
 
 async def _health_handler(_request: aiohttp.web.Request) -> aiohttp.web.Response:
+    try:
+        from ..persistence.db import get_pool
+
+        pool = get_pool()
+    except Exception:
+        # Pool not initialized yet. In normal runtime the WS/health routes only
+        # start after init_db, so this only happens during early startup; report
+        # ok rather than failing readiness prematurely.
+        return aiohttp.web.json_response({"status": "ok"})
+    try:
+        await pool.fetchval("SELECT 1")
+    except Exception as exc:
+        logger.warning("Logger health check DB probe failed: {}", exc)
+        return aiohttp.web.json_response(
+            {"status": "unhealthy", "reason": "db_error"},
+            status=503,
+        )
     return aiohttp.web.json_response({"status": "ok"})
 
 

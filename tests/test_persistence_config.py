@@ -31,7 +31,15 @@ class TestPostgresConfigDefaults(unittest.TestCase):
 
     def setUp(self) -> None:
         self._env_backup = os.environ.copy()
-        os.environ.pop("POSTGRES_DSN", None)
+        for key in (
+            "POSTGRES_DSN",
+            "POSTGRES_COMMAND_TIMEOUT_SEC",
+            "POSTGRES_CONNECT_MAX_ATTEMPTS",
+            "POSTGRES_CONNECT_RETRY_DELAY_SEC",
+            "POSTGRES_POOL_MIN_SIZE",
+            "POSTGRES_POOL_MAX_SIZE",
+        ):
+            os.environ.pop(key, None)
 
     def tearDown(self) -> None:
         os.environ.clear()
@@ -44,6 +52,14 @@ class TestPostgresConfigDefaults(unittest.TestCase):
     def test_default_dsn(self) -> None:
         cfg = load_postgres_config()
         self.assertEqual(cfg.dsn, "postgresql://admin:password@localhost:5432/app_db")
+
+    def test_default_resilience_settings(self) -> None:
+        cfg = load_postgres_config()
+        self.assertEqual(cfg.command_timeout_sec, 30.0)
+        self.assertEqual(cfg.connect_max_attempts, 30)
+        self.assertEqual(cfg.connect_retry_delay_sec, 2.0)
+        self.assertEqual(cfg.pool_min_size, 2)
+        self.assertEqual(cfg.pool_max_size, 10)
 
 
 class TestPostgresConfigEnvOverride(unittest.TestCase):

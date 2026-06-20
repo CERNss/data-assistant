@@ -10,7 +10,14 @@ HEALTH_PORT = 8080
 
 
 async def _health_handler(_request: web.Request) -> web.Response:
-    return web.json_response({"status": "ok"})
+    from .chat_image.tagger_worker import worker_is_healthy
+
+    if worker_is_healthy():
+        return web.json_response({"status": "ok"})
+    return web.json_response(
+        {"status": "unhealthy", "reason": "nats_disconnected"},
+        status=503,
+    )
 
 
 async def run_health_server(

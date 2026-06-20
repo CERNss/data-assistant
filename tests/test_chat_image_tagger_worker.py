@@ -338,6 +338,9 @@ class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
         stream_config = js.add_stream.await_args.kwargs["config"]
         self.assertEqual(stream_config.name, "CHAT_IMAGE_TAGGER_TASKS")
         self.assertEqual(stream_config.subjects, ["chat.image.tagger.task"])
+        self.assertEqual(stream_config.max_age, 604800.0)
+        self.assertEqual(stream_config.max_bytes, -1)
+        self.assertEqual(stream_config.max_msgs, -1)
         js.update_stream.assert_not_awaited()
 
     async def test_ensure_jetstream_stream_updates_missing_subjects(self) -> None:
@@ -533,6 +536,57 @@ class TestNatsLifecycleCallbacks(unittest.IsolatedAsyncioTestCase):
 
         # An expected close during shutdown must not flag a restart.
         self.assertFalse(nats_closed.is_set())
+
+
+class TestAckOrNakBackoff(unittest.IsolatedAsyncioTestCase):
+    def _msg(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            subject="s", metadata=object(), ack=AsyncMock(), nak=AsyncMock()
+        )
+
+    async def test_nak_uses_delay_when_configured(self) -> None:
+        from processor_service.service.chat_image.tagger_worker import (
+            _ack_or_nak_message,
+        )
+
+        msg = self._msg()
+        await _ack_or_nak_message(msg, success=False, nak_delay_sec=5.0)
+        msg.nak.assert_awaited_once_with(delay=5.0)
+
+    async def test_nak_without_delay_when_zero(self) -> None:
+        from processor_service.service.chat_image.tagger_worker import (
+            _ack_or_nak_message,
+        )
+
+        msg = self._msg()
+        await _ack_or_nak_message(msg, success=False, nak_delay_sec=0.0)
+        msg.nak.assert_awaited_once_with()
+
+
+class TestWorkerLiveness(unittest.TestCase):
+    def tearDown(self) -> None:
+        from processor_service.service.chat_image import tagger_worker
+
+        tagger_worker.reset_nats_liveness(required=False)
+
+    def test_healthy_when_nats_not_required(self) -> None:
+        from processor_service.service.chat_image import tagger_worker
+
+        tagger_worker.reset_nats_liveness(required=False)
+        self.assertTrue(tagger_worker.worker_is_healthy())
+
+    def test_unhealthy_when_required_and_disconnected(self) -> None:
+        from processor_service.service.chat_image import tagger_worker
+
+        tagger_worker.reset_nats_liveness(required=True)
+        self.assertFalse(tagger_worker.worker_is_healthy())
+
+    def test_healthy_when_required_and_connected(self) -> None:
+        from processor_service.service.chat_image import tagger_worker
+
+        tagger_worker.reset_nats_liveness(required=True)
+        tagger_worker.set_nats_connected(True)
+        self.assertTrue(tagger_worker.worker_is_healthy())
 
 
 if __name__ == "__main__":

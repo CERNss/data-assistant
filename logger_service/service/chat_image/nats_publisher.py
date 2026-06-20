@@ -214,6 +214,14 @@ async def _ensure_stream(config: ChatImageConfig, js: Any) -> None:
     except Exception as exc:
         raise RuntimeError("nats-py JetStream API is required") from exc
 
+    max_age = (
+        config.nats.stream_max_age_sec
+        if config.nats.stream_max_age_sec > 0
+        else None
+    )
+    max_bytes = config.nats.stream_max_bytes
+    max_msgs = config.nats.stream_max_msgs
+
     desired_subjects = list(config.nats.stream_subjects)
     try:
         stream_info = await js.stream_info(config.nats.stream_name)
@@ -224,26 +232,48 @@ async def _ensure_stream(config: ChatImageConfig, js: Any) -> None:
                 subjects=desired_subjects,
                 retention=RetentionPolicy.LIMITS,
                 storage=StorageType.FILE,
+                max_age=max_age,
+                max_bytes=max_bytes,
+                max_msgs=max_msgs,
             )
         )
         logger.info(
-            "Created JetStream stream: stream={} subjects={}",
+            "Created JetStream stream: stream={} subjects={} max_age_sec={} "
+            "max_bytes={} max_msgs={}",
             config.nats.stream_name,
             ",".join(config.nats.stream_subjects),
+            max_age,
+            max_bytes,
+            max_msgs,
         )
     else:
-        existing_subjects = list(getattr(stream_info.config, "subjects", []) or [])
+        stream_config = stream_info.config
+        existing_subjects = list(getattr(stream_config, "subjects", []) or [])
         missing_subjects = [
             subject for subject in desired_subjects if subject not in existing_subjects
         ]
+        needs_update = False
         if missing_subjects:
-            stream_config = stream_info.config
             stream_config.subjects = [*existing_subjects, *missing_subjects]
+            needs_update = True
+        if getattr(stream_config, "max_age", None) != max_age:
+            stream_config.max_age = max_age
+            needs_update = True
+        if getattr(stream_config, "max_bytes", None) != max_bytes:
+            stream_config.max_bytes = max_bytes
+            needs_update = True
+        if getattr(stream_config, "max_msgs", None) != max_msgs:
+            stream_config.max_msgs = max_msgs
+            needs_update = True
+        if needs_update:
             await js.update_stream(config=stream_config)
             logger.info(
-                "Updated JetStream stream subjects: stream={} added_subjects={}",
+                "Reconciled JetStream stream: stream={} max_age_sec={} "
+                "max_bytes={} max_msgs={}",
                 config.nats.stream_name,
-                ",".join(missing_subjects),
+                max_age,
+                max_bytes,
+                max_msgs,
             )
 
     _ensured_streams.add(stream_key)
