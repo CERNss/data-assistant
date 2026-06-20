@@ -110,8 +110,16 @@ CREATE TABLE IF NOT EXISTS onebot_nats_dispatches (
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE onebot_nats_dispatches
+    ADD COLUMN IF NOT EXISTS attempt_count int NOT NULL DEFAULT 0;
+
+ALTER TABLE onebot_nats_dispatches
+    ADD COLUMN IF NOT EXISTS updated_at timestamptz;
+
 CREATE INDEX IF NOT EXISTS idx_onebot_nats_image_id ON onebot_nats_dispatches(image_id);
 CREATE INDEX IF NOT EXISTS idx_onebot_nats_status ON onebot_nats_dispatches(status);
+CREATE INDEX IF NOT EXISTS idx_onebot_nats_status_created
+    ON onebot_nats_dispatches(status, created_at);
 """
 
 

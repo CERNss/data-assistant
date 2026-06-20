@@ -317,3 +317,61 @@ async def insert_nats_dispatch(
         error,
     )
     return row["id"]
+
+
+async def fetch_unpublished_nats_dispatches(
+    *,
+    limit: int,
+    max_attempts: int,
+    min_age_sec: float,
+) -> list[dict[str, Any]]:
+    """Return outbox rows that still need to reach NATS.
+
+    Excludes already-published rows and rows newer than ``min_age_sec`` (so the
+    relay does not race an in-flight hot-path publish). When ``max_attempts`` is
+    positive, rows that exhausted their attempts are skipped.
+    """
+    pool = get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT id, image_id, subject, payload, attempt_count
+        FROM onebot_nats_dispatches
+        WHERE status <> 'published'
+          AND created_at < now() - ($2 * interval '1 second')
+          AND ($3 <= 0 OR attempt_count < $3)
+        ORDER BY created_at
+        LIMIT $1
+        """,
+        limit,
+        float(min_age_sec),
+        int(max_attempts),
+    )
+    return [dict(row) for row in rows]
+
+
+async def mark_nats_dispatch_published(dispatch_id: int) -> None:
+    pool = get_pool()
+    await pool.execute(
+        """
+        UPDATE onebot_nats_dispatches
+        SET status='published', error=NULL, updated_at=now()
+        WHERE id=$1
+        """,
+        dispatch_id,
+    )
+
+
+async def mark_nats_dispatch_failed(dispatch_id: int, *, error: str) -> None:
+    pool = get_pool()
+    await pool.execute(
+        """
+        UPDATE onebot_nats_dispatches
+        SET status='failed',
+            error=$2,
+            attempt_count=attempt_count + 1,
+            updated_at=now()
+        WHERE id=$1
+        """,
+        dispatch_id,
+        error,
+    )

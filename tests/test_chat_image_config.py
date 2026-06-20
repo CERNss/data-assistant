@@ -37,6 +37,11 @@ class TestLoggerChatImageConfig(unittest.TestCase):
         os.environ.pop("CHAT_IMAGE_NATS_JETSTREAM_ENABLED", None)
         os.environ.pop("CHAT_IMAGE_NATS_STREAM", None)
         os.environ.pop("CHAT_IMAGE_NATS_STREAM_SUBJECTS", None)
+        os.environ.pop("CHAT_IMAGE_NATS_OUTBOX_RELAY_ENABLED", None)
+        os.environ.pop("CHAT_IMAGE_NATS_OUTBOX_RELAY_INTERVAL_SEC", None)
+        os.environ.pop("CHAT_IMAGE_NATS_OUTBOX_RELAY_BATCH_SIZE", None)
+        os.environ.pop("CHAT_IMAGE_NATS_OUTBOX_MAX_ATTEMPTS", None)
+        os.environ.pop("CHAT_IMAGE_NATS_OUTBOX_MIN_AGE_SEC", None)
 
         cfg = load_logger_chat_image_config()
         self.assertEqual(cfg.save_root, Path("data/chat_images"))
@@ -53,6 +58,11 @@ class TestLoggerChatImageConfig(unittest.TestCase):
         self.assertTrue(cfg.nats.jetstream_enabled)
         self.assertEqual(cfg.nats.stream_name, "CHAT_IMAGE_TAGGER_TASKS")
         self.assertEqual(cfg.nats.stream_subjects, ("chat.image.tagger.task",))
+        self.assertTrue(cfg.outbox.enabled)
+        self.assertEqual(cfg.outbox.interval_sec, 30.0)
+        self.assertEqual(cfg.outbox.batch_size, 100)
+        self.assertEqual(cfg.outbox.max_attempts, 0)
+        self.assertEqual(cfg.outbox.min_age_sec, 15.0)
 
     def test_overrides(self) -> None:
         os.environ["CHAT_IMAGE_SAVE_DIR"] = "/tmp/chat-images"
@@ -70,6 +80,11 @@ class TestLoggerChatImageConfig(unittest.TestCase):
         os.environ["CHAT_IMAGE_NATS_JETSTREAM_ENABLED"] = "false"
         os.environ["CHAT_IMAGE_NATS_STREAM"] = "CUSTOM_STREAM"
         os.environ["CHAT_IMAGE_NATS_STREAM_SUBJECTS"] = "extra.subject"
+        os.environ["CHAT_IMAGE_NATS_OUTBOX_RELAY_ENABLED"] = "false"
+        os.environ["CHAT_IMAGE_NATS_OUTBOX_RELAY_INTERVAL_SEC"] = "5"
+        os.environ["CHAT_IMAGE_NATS_OUTBOX_RELAY_BATCH_SIZE"] = "10"
+        os.environ["CHAT_IMAGE_NATS_OUTBOX_MAX_ATTEMPTS"] = "3"
+        os.environ["CHAT_IMAGE_NATS_OUTBOX_MIN_AGE_SEC"] = "2"
 
         cfg = load_logger_chat_image_config()
         self.assertEqual(cfg.save_root, Path("/tmp/chat-images"))
@@ -88,6 +103,11 @@ class TestLoggerChatImageConfig(unittest.TestCase):
         self.assertFalse(cfg.nats.jetstream_enabled)
         self.assertEqual(cfg.nats.stream_name, "CUSTOM_STREAM")
         self.assertEqual(cfg.nats.stream_subjects, ("task.subject", "extra.subject"))
+        self.assertFalse(cfg.outbox.enabled)
+        self.assertEqual(cfg.outbox.interval_sec, 5.0)
+        self.assertEqual(cfg.outbox.batch_size, 10)
+        self.assertEqual(cfg.outbox.max_attempts, 3)
+        self.assertEqual(cfg.outbox.min_age_sec, 2.0)
 
 
 class TestProcessorChatImageConfig(unittest.TestCase):

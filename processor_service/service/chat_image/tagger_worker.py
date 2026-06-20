@@ -125,8 +125,6 @@ async def _process_tagger_task_message(
             await enqueue_tagger_task_payload(config=config, payload=payload)
             if config.tagger.auto_run:
                 await ensure_tagger_auto_run(config)
-            else:
-                await run_tagger_once(config)
             outcome = "enqueued"
         except Exception as exc:
             logger.warning("Failed to process NATS payload on {}: {}", subject, exc)
@@ -228,6 +226,35 @@ def _record_message_metrics(
         MESSAGE_LATENCY_MS.record(latency_ms, attributes)
 
 
+def _make_nats_lifecycle_callbacks(
+    shutdown_event: asyncio.Event, nats_closed: asyncio.Event
+) -> tuple[Any, Any, Any, Any]:
+    """Build NATS connection lifecycle callbacks.
+
+    The closed callback flips ``nats_closed`` and wakes ``shutdown_event`` so the
+    worker exits and gets restarted, unless a graceful shutdown is already in
+    progress (in which case the close is expected and ignored).
+    """
+
+    async def _on_error(exc: Exception) -> None:
+        logger.warning("NATS worker connection error: {}", exc)
+
+    async def _on_disconnected() -> None:
+        logger.warning("NATS worker disconnected; reconnecting...")
+
+    async def _on_reconnected() -> None:
+        logger.info("NATS worker reconnected")
+
+    async def _on_closed() -> None:
+        if shutdown_event.is_set():
+            return
+        logger.error("NATS worker connection closed permanently; requesting restart")
+        nats_closed.set()
+        shutdown_event.set()
+
+    return _on_error, _on_disconnected, _on_reconnected, _on_closed
+
+
 async def _run(
     process_backlog: bool,
     stop_event: asyncio.Event | None = None,
@@ -254,10 +281,27 @@ async def _run(
         print(f"nats-py is required for worker mode: {exc}")
         return 1
 
+    shutdown_event = stop_event or asyncio.Event()
+    nats_closed = asyncio.Event()
+    (
+        on_nats_error,
+        on_nats_disconnected,
+        on_nats_reconnected,
+        on_nats_closed,
+    ) = _make_nats_lifecycle_callbacks(shutdown_event, nats_closed)
+
+    # Reconnect forever so a transient NATS outage self-heals instead of
+    # crash-looping; closed_cb is the safety net for a terminal close so the
+    # worker can never end up silently alive-but-disconnected.
     nc = await nats.connect(
         servers=list(config.nats.servers),
         name=f"{config.nats.client_name}-worker",
         connect_timeout=config.nats.connect_timeout_sec,
+        max_reconnect_attempts=-1,
+        error_cb=on_nats_error,
+        disconnected_cb=on_nats_disconnected,
+        reconnected_cb=on_nats_reconnected,
+        closed_cb=on_nats_closed,
     )
 
     async def _on_message(msg: Any) -> None:
@@ -299,7 +343,7 @@ async def _run(
             config.nats.queue_group,
         )
 
-    if process_backlog:
+    if process_backlog and await _is_tagger_healthy(config):
         backlog_summary = await run_tagger_until_empty(config)
         if backlog_summary["picked"] > 0:
             logger.info(
@@ -309,8 +353,12 @@ async def _run(
                 backlog_summary["failed"],
                 backlog_summary["requeued"],
             )
+    elif process_backlog:
+        logger.warning(
+            "Skip local backlog after subscribe because tagger is not healthy: base_url={}",
+            config.tagger.base_url,
+        )
 
-    shutdown_event = stop_event or asyncio.Event()
     drain_task = asyncio.create_task(
         _periodic_queue_drain(config=config, stop_event=shutdown_event),
         name="tagger-queue-drain",
@@ -325,8 +373,14 @@ async def _run(
             await drain_task
         except asyncio.CancelledError:
             pass
-        await nc.drain()
-    return 0
+        if not nc.is_closed:
+            try:
+                await nc.drain()
+            except Exception as exc:
+                logger.warning("Failed to drain NATS worker: {}", exc)
+    # Non-zero exit when NATS closed under us, so the orchestrator restarts the
+    # worker instead of leaving it parked without a live subscription.
+    return 1 if nats_closed.is_set() else 0
 
 
 def _validate_jetstream_queue_config(config: ChatImageConfig) -> None:

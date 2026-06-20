@@ -175,7 +175,7 @@ Logger persists to PostgreSQL:
 
 - `onebot_events`: all inbound OneBot events (`message`, `message_sent`, `notice`, `request`, `meta_event`)
 - `onebot_message_images`: one row per extracted image segment, download state, metadata, dedup evidence, refresh trace, transfer state
-- `onebot_nats_dispatches`: NATS publish status (`published` / `failed`)
+- `onebot_nats_dispatches`: NATS publish status (`pending` / `published` / `failed`), used as a transactional outbox
 
 ## Image Handling
 
@@ -216,12 +216,25 @@ CHAT_IMAGE_NATS_STREAM_SUBJECTS=chat.image.tagger.task
 CHAT_IMAGE_NATS_DURABLE=chat-image-tagger-workers
 CHAT_IMAGE_NATS_ACK_WAIT_SEC=120
 CHAT_IMAGE_NATS_MAX_DELIVER=10
+CHAT_IMAGE_NATS_OUTBOX_RELAY_ENABLED=true
+CHAT_IMAGE_NATS_OUTBOX_RELAY_INTERVAL_SEC=30
+CHAT_IMAGE_NATS_OUTBOX_RELAY_BATCH_SIZE=100
+CHAT_IMAGE_NATS_OUTBOX_MAX_ATTEMPTS=0
+CHAT_IMAGE_NATS_OUTBOX_MIN_AGE_SEC=15
 CHAT_IMAGE_TAGGER_DRAIN_INTERVAL_SEC=10
 CHAT_IMAGE_TAGGER_HEALTHCHECK_PATH=/healthz
 ```
 
 `CHAT_IMAGE_NATS_JETSTREAM_ENABLED=true` is the default. Set it to `false`
 only when you intentionally want legacy core NATS pub/sub behavior.
+
+The logger persists each tagging task to `onebot_nats_dispatches` (status
+`pending`) before publishing, then settles it to `published`/`failed`. A
+background outbox relay re-publishes any non-`published` row, so a NATS outage
+at save time never loses a task: once the image is in Postgres, the
+collect → NATS handoff is guaranteed. `CHAT_IMAGE_NATS_OUTBOX_MAX_ATTEMPTS=0`
+means retry forever; `CHAT_IMAGE_NATS_OUTBOX_MIN_AGE_SEC` keeps the relay from
+racing an in-flight publish.
 
 ## Tests
 

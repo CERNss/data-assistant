@@ -215,6 +215,94 @@ class TestProcessImageMissingUrl(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(audit_payload["status"], "db_update_failed")
             self.assertEqual(audit_payload["image_id"], 42)
 
+    async def test_saved_image_uses_transactional_outbox_order(self) -> None:
+        image = ImageSegment(
+            seq=0,
+            url_raw="https://example.com/a.jpg",
+            url_decoded="https://example.com/a.jpg",
+            file_name="a.jpg",
+            sub_type=None,
+            file_size=None,
+            summary=None,
+            raw_segment={"type": "image", "data": {"url": "https://example.com/a.jpg"}},
+        )
+        event = _event_with_image(image)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            chat_config = SimpleNamespace(
+                audit_log_file=Path(tmp) / "audit.jsonl",
+                nats=SimpleNamespace(enabled=True, subject="t"),
+                retry_count=3,
+                save_root=Path(tmp),
+            )
+            pool = SimpleNamespace(fetchrow=AsyncMock(return_value=None))
+
+            with (
+                patch(
+                    "logger_service.service.persistence.repository.insert_image",
+                    new_callable=AsyncMock,
+                    return_value=42,
+                ),
+                patch(
+                    "logger_service.service.chat_image.downloader.download_image_with_retry",
+                    new_callable=AsyncMock,
+                    return_value=(
+                        SimpleNamespace(
+                            body=b"not-really-an-image",
+                            content_type="image/jpeg",
+                            content_length=19,
+                        ),
+                        1,
+                    ),
+                ),
+                patch(
+                    "logger_service.service.persistence.db.get_pool",
+                    return_value=pool,
+                ),
+                patch(
+                    "logger_service.service.persistence.repository.update_image_download_success",
+                    new_callable=AsyncMock,
+                ),
+                patch(
+                    "logger_service.service.persistence.repository.insert_nats_dispatch",
+                    new_callable=AsyncMock,
+                    return_value=99,
+                ) as mock_insert_dispatch,
+                patch(
+                    "logger_service.service.chat_image.nats_publisher.publish_tagger_task_with_result",
+                    new_callable=AsyncMock,
+                    return_value=(True, None),
+                ) as mock_publish,
+                patch(
+                    "logger_service.service.persistence.repository.mark_nats_dispatch_published",
+                    new_callable=AsyncMock,
+                ) as mock_mark_published,
+                patch(
+                    "logger_service.service.persistence.repository.mark_nats_dispatch_failed",
+                    new_callable=AsyncMock,
+                ) as mock_mark_failed,
+                patch("logger_service.service.chat_image.audit.append_json_line"),
+            ):
+                await _process_image(
+                    event_id=10,
+                    event=event,
+                    image=image,
+                    chat_config=chat_config,
+                    napcat_config=_napcat_config(),
+                )
+
+            # Outbox intent persisted as 'pending' BEFORE publishing.
+            mock_insert_dispatch.assert_awaited_once()
+            self.assertEqual(
+                mock_insert_dispatch.await_args.kwargs["status"], "pending"
+            )
+            self.assertEqual(mock_insert_dispatch.await_args.kwargs["image_id"], 42)
+            # Published with a stable dedup id, then the row is settled.
+            mock_publish.assert_awaited_once()
+            self.assertEqual(mock_publish.await_args.kwargs["msg_id"], "42")
+            mock_mark_published.assert_awaited_once_with(99)
+            mock_mark_failed.assert_not_awaited()
+
 
 def _base_event(
     *,

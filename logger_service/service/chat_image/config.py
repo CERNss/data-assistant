@@ -57,6 +57,15 @@ class NatsTaskBusConfig:
 
 
 @dataclass(frozen=True)
+class OutboxRelayConfig:
+    enabled: bool
+    interval_sec: float
+    batch_size: int
+    max_attempts: int
+    min_age_sec: float
+
+
+@dataclass(frozen=True)
 class ChatImageConfig:
     save_root: Path
     timeout_sec: float
@@ -64,6 +73,7 @@ class ChatImageConfig:
     retry_delay_sec: float
     audit_log_file: Path
     nats: NatsTaskBusConfig
+    outbox: OutboxRelayConfig
 
 
 def load_chat_image_config() -> ChatImageConfig:
@@ -112,5 +122,20 @@ def load_chat_image_config() -> ChatImageConfig:
             ).strip()
             or "CHAT_IMAGE_TAGGER_TASKS",
             stream_subjects=stream_subjects,
+        ),
+        outbox=OutboxRelayConfig(
+            enabled=_env_bool("CHAT_IMAGE_NATS_OUTBOX_RELAY_ENABLED", True),
+            interval_sec=_env_float(
+                "CHAT_IMAGE_NATS_OUTBOX_RELAY_INTERVAL_SEC", 30.0, minimum=1.0
+            ),
+            batch_size=_env_int(
+                "CHAT_IMAGE_NATS_OUTBOX_RELAY_BATCH_SIZE", 100, minimum=1
+            ),
+            max_attempts=_env_int(
+                "CHAT_IMAGE_NATS_OUTBOX_MAX_ATTEMPTS", 0, minimum=0
+            ),
+            min_age_sec=_env_float(
+                "CHAT_IMAGE_NATS_OUTBOX_MIN_AGE_SEC", 15.0, minimum=0.0
+            ),
         ),
     )

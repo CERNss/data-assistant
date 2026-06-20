@@ -69,7 +69,7 @@ class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
 
         enqueue_mock.assert_not_awaited()
 
-    async def test_handle_message_runs_once_when_auto_run_disabled(self) -> None:
+    async def test_handle_message_enqueues_without_sync_tagger_run(self) -> None:
         config = self._build_config(auto_run=False)
         task = TaskV2(
             version=2,
@@ -105,7 +105,7 @@ class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
             await handle_nats_message(config=config, data=b"{}", subject="test.subject")
 
         enqueue_mock.assert_awaited_once()
-        run_once_mock.assert_awaited_once_with(config)
+        run_once_mock.assert_not_awaited()
         auto_run_mock.assert_not_awaited()
 
     async def test_handle_message_swallows_processing_error(self) -> None:
@@ -443,6 +443,96 @@ class TestChatImageTaggerWorker(unittest.IsolatedAsyncioTestCase):
 
         healthy_mock.assert_awaited_once_with(config)
         run_once_mock.assert_awaited_once_with(config)
+
+    async def test_run_skips_startup_backlog_when_tagger_unhealthy(self) -> None:
+        config = self._build_config(auto_run=False)
+
+        class FakeNatsConnection:
+            is_closed = False
+
+            def jetstream(self) -> SimpleNamespace:
+                return SimpleNamespace(subscribe=AsyncMock())
+
+            async def drain(self) -> None:
+                return None
+
+        fake_nc = FakeNatsConnection()
+        nats_module = types.ModuleType("nats")
+        nats_module.connect = AsyncMock(return_value=fake_nc)
+        stop_event = asyncio.Event()
+
+        async def stop_after_subscribe(*_: object, **__: object) -> None:
+            stop_event.set()
+
+        with (
+            patch(
+                "processor_service.service.chat_image.tagger_worker.load_chat_image_config",
+                return_value=config,
+            ),
+            patch.dict(sys.modules, {"nats": nats_module}),
+            patch(
+                "processor_service.service.chat_image.tagger_worker._ensure_jetstream_stream",
+                new=AsyncMock(),
+            ),
+            patch(
+                "processor_service.service.chat_image.tagger_worker._build_consumer_config",
+                return_value=object(),
+            ),
+            patch(
+                "processor_service.service.chat_image.tagger_worker._is_tagger_healthy",
+                new=AsyncMock(return_value=False),
+            ) as healthy_mock,
+            patch(
+                "processor_service.service.chat_image.tagger_worker.run_tagger_until_empty",
+                new=AsyncMock(),
+            ) as run_until_empty_mock,
+            patch(
+                "processor_service.service.chat_image.tagger_worker._periodic_queue_drain",
+                new=AsyncMock(side_effect=stop_after_subscribe),
+            ),
+        ):
+            from processor_service.service.chat_image.tagger_worker import _run
+
+            result = await _run(process_backlog=True, stop_event=stop_event)
+
+        self.assertEqual(result, 0)
+        healthy_mock.assert_awaited_once_with(config)
+        run_until_empty_mock.assert_not_awaited()
+
+
+class TestNatsLifecycleCallbacks(unittest.IsolatedAsyncioTestCase):
+    async def test_closed_callback_requests_restart(self) -> None:
+        from processor_service.service.chat_image.tagger_worker import (
+            _make_nats_lifecycle_callbacks,
+        )
+
+        shutdown_event = asyncio.Event()
+        nats_closed = asyncio.Event()
+        _, _, _, on_closed = _make_nats_lifecycle_callbacks(
+            shutdown_event, nats_closed
+        )
+
+        await on_closed()
+
+        self.assertTrue(nats_closed.is_set())
+        self.assertTrue(shutdown_event.is_set())
+
+    async def test_closed_callback_noop_during_graceful_shutdown(self) -> None:
+        from processor_service.service.chat_image.tagger_worker import (
+            _make_nats_lifecycle_callbacks,
+        )
+
+        shutdown_event = asyncio.Event()
+        shutdown_event.set()
+        nats_closed = asyncio.Event()
+        _, _, _, on_closed = _make_nats_lifecycle_callbacks(
+            shutdown_event, nats_closed
+        )
+
+        await on_closed()
+
+        # An expected close during shutdown must not flag a restart.
+        self.assertFalse(nats_closed.is_set())
 
 
 if __name__ == "__main__":

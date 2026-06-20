@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import signal
+from contextlib import suppress
 
 from loguru import logger
 
 from . import telemetry
+from .chat_image.config import load_chat_image_config
 from .chat_image.nats_publisher import close_nats_publisher
+from .chat_image.outbox_relay import run_outbox_relay
 from .napcat.config import load_napcat_config
 from .napcat.connection import run_server
 from .napcat.handler import handle_raw_event
@@ -49,9 +52,15 @@ async def main() -> None:
 
     napcat_config = load_napcat_config()
     pg_config = load_postgres_config()
+    chat_image_config = load_chat_image_config()
 
     logger.info("Initializing PostgreSQL...")
     await init_db(pg_config)
+
+    relay_task = asyncio.create_task(
+        run_outbox_relay(chat_image_config, stop_event=shutdown_event),
+        name="outbox-relay",
+    )
 
     logger.info(
         "Starting NapCat reverse WS server: host={} port={} path={}",
@@ -66,6 +75,9 @@ async def main() -> None:
             stop_event=shutdown_event,
         )
     finally:
+        relay_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await relay_task
         await close_nats_publisher()
         await close_db()
 

@@ -269,6 +269,8 @@ async def _process_image(
     from ..persistence.repository import (
         insert_image,
         insert_nats_dispatch,
+        mark_nats_dispatch_failed,
+        mark_nats_dispatch_published,
         update_image_download_duplicate,
         update_image_download_failure,
         update_image_download_success,
@@ -643,26 +645,18 @@ async def _process_image(
         original_url=original_url,
         context=tag_context,
     )
-    published, publish_error = await publish_tagger_task_with_result(
-        chat_config,
-        payload=nats_payload,
-    )
 
-    nats_status: str
-    nats_error: str | None = None
-    if published:
-        nats_status = "published"
-    else:
-        nats_status = "failed"
-        nats_error = publish_error or "nats_publish_failed"
-
+    # Transactional outbox: persist the publish intent BEFORE publishing so a
+    # publish failure or a crash mid-publish leaves a durable row the outbox
+    # relay can drive to NATS later. The image is already saved; this guarantees
+    # the collect->NATS handoff is never lost to a transient NATS outage.
+    dispatch_id: int | None = None
     try:
-        await insert_nats_dispatch(
+        dispatch_id = await insert_nats_dispatch(
             image_id=image_id,
             subject=chat_config.nats.subject,
             payload=nats_payload,
-            status=nats_status,
-            error=nats_error,
+            status="pending",
         )
     except Exception as db_exc:
         logger.error(
@@ -671,6 +665,29 @@ async def _process_image(
             image_id,
             db_exc,
         )
+
+    published, publish_error = await publish_tagger_task_with_result(
+        chat_config,
+        payload=nats_payload,
+        msg_id=str(image_id),
+    )
+
+    if dispatch_id is not None:
+        try:
+            if published:
+                await mark_nats_dispatch_published(dispatch_id)
+            else:
+                await mark_nats_dispatch_failed(
+                    dispatch_id,
+                    error=publish_error or "nats_publish_failed",
+                )
+        except Exception as db_exc:
+            logger.error(
+                "Failed to update NATS dispatch status: event_id={} image_id={} error={}",
+                event_id,
+                image_id,
+                db_exc,
+            )
 
     _record_image_metrics(
         outcome="saved",

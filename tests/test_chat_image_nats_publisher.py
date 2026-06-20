@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 from logger_service.service.chat_image.config import (
     ChatImageConfig,
     NatsTaskBusConfig,
+    OutboxRelayConfig,
 )
 
 
@@ -31,6 +32,13 @@ class TestChatImageNatsPublisher(unittest.IsolatedAsyncioTestCase):
                 jetstream_enabled=jetstream_enabled,
                 stream_name="CHAT_IMAGE_TAGGER_TASKS",
                 stream_subjects=("chat.image.tagger.task",),
+            ),
+            outbox=OutboxRelayConfig(
+                enabled=True,
+                interval_sec=30.0,
+                batch_size=100,
+                max_attempts=0,
+                min_age_sec=15.0,
             ),
         )
 

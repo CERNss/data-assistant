@@ -133,6 +133,69 @@ async def _block_forever() -> None:
     await asyncio.Future()
 
 
+async def _consume_ws_messages(
+    ws: aiohttp.web.WebSocketResponse,
+    *,
+    on_event: Callable[[dict[str, Any]], Awaitable[None]],
+    action_client: OneBotActionClient,
+    heartbeat_timeout: float | None,
+    remote: Any,
+) -> None:
+    """Read NapCat frames until the socket closes.
+
+    When ``heartbeat_timeout`` is set and no frame (including OneBot heartbeat
+    meta-events) arrives within that window, the connection is treated as a
+    half-open/stale link and closed so NapCat reconnects, instead of the server
+    blocking forever on a dead peer.
+    """
+    while not ws.closed:
+        try:
+            msg = await ws.receive(timeout=heartbeat_timeout)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "NapCat heartbeat timeout; closing stale connection:"
+                " remote={} timeout_sec={}",
+                remote,
+                heartbeat_timeout,
+            )
+            await ws.close()
+            return
+
+        if msg.type == aiohttp.WSMsgType.TEXT:
+            try:
+                raw = json.loads(msg.data)
+            except (json.JSONDecodeError, ValueError):
+                logger.warning(
+                    "NapCat JSON parse error: remote={} data={!r}",
+                    remote,
+                    msg.data[:200],
+                )
+                continue
+            if isinstance(raw, dict):
+                if action_client.consume_action_response(raw):
+                    continue
+                await on_event(raw)
+            else:
+                logger.warning(
+                    "NapCat unexpected payload type: remote={} type={}",
+                    remote,
+                    type(raw).__name__,
+                )
+        elif msg.type == aiohttp.WSMsgType.ERROR:
+            logger.warning(
+                "NapCat WS error: remote={} error={}",
+                remote,
+                ws.exception(),
+            )
+            return
+        elif msg.type in (
+            aiohttp.WSMsgType.CLOSE,
+            aiohttp.WSMsgType.CLOSING,
+            aiohttp.WSMsgType.CLOSED,
+        ):
+            return
+
+
 def _make_ws_handler(
     config: NapCatConfig,
     on_event: Callable[[dict[str, Any]], Awaitable[None]],
@@ -155,34 +218,20 @@ def _make_ws_handler(
         _set_action_client(action_client)
         logger.info("NapCat connected: remote={}", request.remote)
 
+        heartbeat_timeout = (
+            config.heartbeat_timeout_sec
+            if config.heartbeat_timeout_sec > 0
+            else None
+        )
+
         try:
-            async for msg in ws:
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    try:
-                        raw = json.loads(msg.data)
-                    except (json.JSONDecodeError, ValueError):
-                        logger.warning(
-                            "NapCat JSON parse error: remote={} data={!r}",
-                            request.remote,
-                            msg.data[:200],
-                        )
-                        continue
-                    if isinstance(raw, dict):
-                        if action_client.consume_action_response(raw):
-                            continue
-                        await on_event(raw)
-                    else:
-                        logger.warning(
-                            "NapCat unexpected payload type: remote={} type={}",
-                            request.remote,
-                            type(raw).__name__,
-                        )
-                elif msg.type == aiohttp.WSMsgType.ERROR:
-                    logger.warning(
-                        "NapCat WS error: remote={} error={}",
-                        request.remote,
-                        ws.exception(),
-                    )
+            await _consume_ws_messages(
+                ws,
+                on_event=on_event,
+                action_client=action_client,
+                heartbeat_timeout=heartbeat_timeout,
+                remote=request.remote,
+            )
         finally:
             action_client.close("NapCat action channel disconnected")
             if get_action_client() is action_client:

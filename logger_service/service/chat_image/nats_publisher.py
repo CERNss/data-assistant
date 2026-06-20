@@ -85,6 +85,7 @@ async def publish_tagger_task_with_result(
     config: ChatImageConfig,
     *,
     payload: dict[str, Any],
+    msg_id: str | None = None,
 ) -> tuple[bool, str | None]:
     image_id = str(payload.get("image_id") or "")
     start_time = time.perf_counter()
@@ -104,6 +105,10 @@ async def publish_tagger_task_with_result(
             )
             return False, "nats_disabled"
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        # Stable dedup id (defaults to image_id) so an outbox replay of an
+        # already-delivered message is de-duplicated by JetStream.
+        dedup_id = msg_id or (image_id or None)
+        headers = {"Nats-Msg-Id": dedup_id} if dedup_id else None
         try:
             client = await _get_or_connect_nats(config)
             if config.nats.jetstream_enabled:
@@ -114,9 +119,10 @@ async def publish_tagger_task_with_result(
                     data,
                     timeout=config.nats.publish_timeout_sec,
                     stream=config.nats.stream_name,
+                    headers=headers,
                 )
             else:
-                await client.publish(config.nats.subject, data)
+                await client.publish(config.nats.subject, data, headers=headers)
                 await client.flush(timeout=config.nats.publish_timeout_sec)
             _record_publish_metrics(
                 outcome="published",
