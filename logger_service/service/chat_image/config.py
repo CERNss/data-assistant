@@ -51,6 +51,9 @@ class NatsTaskBusConfig:
     client_name: str
     connect_timeout_sec: float
     publish_timeout_sec: float
+    jetstream_enabled: bool
+    stream_name: str
+    stream_subjects: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,18 @@ class ChatImageConfig:
 def load_chat_image_config() -> ChatImageConfig:
     raw_nats_servers = os.getenv("CHAT_IMAGE_NATS_SERVERS", "nats://127.0.0.1:4222")
     nats_servers = tuple(v.strip() for v in raw_nats_servers.split(",") if v.strip())
+    nats_subject = (
+        os.getenv("CHAT_IMAGE_NATS_SUBJECT", "chat.image.tagger.task").strip()
+        or "chat.image.tagger.task"
+    )
+    raw_stream_subjects = tuple(
+        v.strip()
+        for v in os.getenv("CHAT_IMAGE_NATS_STREAM_SUBJECTS", "").split(",")
+        if v.strip()
+    )
+    stream_subjects = raw_stream_subjects or (nats_subject,)
+    if nats_subject not in stream_subjects:
+        stream_subjects = (nats_subject, *stream_subjects)
     return ChatImageConfig(
         save_root=Path(
             os.getenv(
@@ -80,10 +95,7 @@ def load_chat_image_config() -> ChatImageConfig:
         nats=NatsTaskBusConfig(
             enabled=_env_bool("CHAT_IMAGE_NATS_ENABLED", False),
             servers=nats_servers or ("nats://127.0.0.1:4222",),
-            subject=os.getenv(
-                "CHAT_IMAGE_NATS_SUBJECT", "chat.image.tagger.task"
-            ).strip()
-            or "chat.image.tagger.task",
+            subject=nats_subject,
             client_name=os.getenv(
                 "CHAT_IMAGE_NATS_CLIENT_NAME", "data-assistant"
             ).strip()
@@ -94,5 +106,11 @@ def load_chat_image_config() -> ChatImageConfig:
             publish_timeout_sec=_env_float(
                 "CHAT_IMAGE_NATS_PUBLISH_TIMEOUT_SEC", 3.0, minimum=0.1
             ),
+            jetstream_enabled=_env_bool("CHAT_IMAGE_NATS_JETSTREAM_ENABLED", True),
+            stream_name=os.getenv(
+                "CHAT_IMAGE_NATS_STREAM", "CHAT_IMAGE_TAGGER_TASKS"
+            ).strip()
+            or "CHAT_IMAGE_TAGGER_TASKS",
+            stream_subjects=stream_subjects,
         ),
     )

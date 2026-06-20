@@ -356,7 +356,7 @@ Key metrics:
 ### Known Limitations
 
 1. **Tags not persisted to DB** — Tagger results only go to `group_image_tags.jsonl`; no structured query capability for tags.
-2. **NATS core pub/sub** — No JetStream; messages can be lost if no subscriber is active when published.
+2. **Legacy core NATS mode is best-effort** — JetStream is enabled by default; if `CHAT_IMAGE_NATS_JETSTREAM_ENABLED=false`, messages can still be lost when no subscriber is active.
 3. **No tag-based classification** — Images stay in their original directory; no post-tagging reorganization.
 4. **External tagger dependency** — Eagle_AItagger_byWD1.4 must be manually installed; not pulled or managed by this project.
 5. **Single audit log file** — `group_image_tags.jsonl` grows unbounded with no rotation.
@@ -490,7 +490,7 @@ There is no repo-pinned linter/formatter config (no `ruff.toml`, `pyproject` too
 - Fluent Bit config files live at `fluent-bit/fluent-bit.conf` and `fluent-bit/parsers.conf`; compose mounts both read-only.
 - Docker build context ignores `tests/` and `openspec/` (`.dockerignore`), so containers cannot run tests.
 - Secrets live in `.env`; never commit real QQ credentials or tokens.
-- NATS publishing is best-effort; when no worker is subscribed, messages can be lost (core pub/sub semantics).
+- NATS publishing uses JetStream by default; only legacy core pub/sub mode is best-effort.
 
 ## Agent Workflow Notes
 

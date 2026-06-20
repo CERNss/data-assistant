@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from aiohttp import ClientError, ClientSession, ClientTimeout
 from loguru import logger
 
 try:
@@ -67,6 +68,12 @@ MESSAGE_LATENCY_MS = (
 async def handle_nats_message(
     *, config: ChatImageConfig, data: bytes, subject: str
 ) -> None:
+    await _process_tagger_task_message(config=config, data=data, subject=subject)
+
+
+async def _process_tagger_task_message(
+    *, config: ChatImageConfig, data: bytes, subject: str
+) -> bool:
     started_at = time.perf_counter()
     outcome = "failed"
     image_id_attr = ""
@@ -89,7 +96,7 @@ async def handle_nats_message(
                 started_at=started_at,
                 image_id=image_id_attr,
             )
-            return
+            return True
 
         image_id_attr = str(task.image_id)
         image_path = _resolve_task_image_path(config, task)
@@ -107,7 +114,7 @@ async def handle_nats_message(
                 started_at=started_at,
                 image_id=image_id_attr,
             )
-            return
+            return False
 
         payload = {
             "image_path": image_path,
@@ -124,6 +131,9 @@ async def handle_nats_message(
         except Exception as exc:
             logger.warning("Failed to process NATS payload on {}: {}", subject, exc)
             outcome = "failed"
+            success = False
+        else:
+            success = True
 
     _record_message_metrics(
         outcome=outcome,
@@ -131,6 +141,7 @@ async def handle_nats_message(
         started_at=started_at,
         image_id=image_id_attr,
     )
+    return success
 
 
 def _resolve_task_image_path(config: ChatImageConfig, task: TaskV2) -> str | None:
@@ -245,19 +256,43 @@ async def _run(
     )
 
     async def _on_message(msg: Any) -> None:
-        await handle_nats_message(config=config, data=msg.data, subject=msg.subject)
+        success = await _process_tagger_task_message(
+            config=config, data=msg.data, subject=msg.subject
+        )
+        await _ack_or_nak_message(msg, success=success)
 
-    await nc.subscribe(
-        config.nats.subject,
-        queue=config.nats.queue_group,
-        cb=_on_message,
-    )
-    logger.info(
-        "Tagger worker subscribed: servers={} subject={} queue_group={}",
-        ",".join(config.nats.servers),
-        config.nats.subject,
-        config.nats.queue_group,
-    )
+    if config.nats.jetstream_enabled:
+        js = nc.jetstream()
+        await _ensure_jetstream_stream(config, js)
+        await js.subscribe(
+            config.nats.subject,
+            queue=config.nats.queue_group,
+            cb=_on_message,
+            durable=config.nats.durable_name,
+            stream=config.nats.stream_name,
+            manual_ack=True,
+            config=_build_consumer_config(config),
+        )
+        logger.info(
+            "Tagger worker subscribed with JetStream: servers={} stream={} subject={} durable={} queue_group={}",
+            ",".join(config.nats.servers),
+            config.nats.stream_name,
+            config.nats.subject,
+            config.nats.durable_name,
+            config.nats.queue_group,
+        )
+    else:
+        await nc.subscribe(
+            config.nats.subject,
+            queue=config.nats.queue_group,
+            cb=_on_message,
+        )
+        logger.info(
+            "Tagger worker subscribed: servers={} subject={} queue_group={}",
+            ",".join(config.nats.servers),
+            config.nats.subject,
+            config.nats.queue_group,
+        )
 
     if process_backlog:
         backlog_summary = await run_tagger_until_empty(config)
@@ -271,13 +306,145 @@ async def _run(
             )
 
     shutdown_event = stop_event or asyncio.Event()
+    drain_task = asyncio.create_task(
+        _periodic_queue_drain(config=config, stop_event=shutdown_event),
+        name="tagger-queue-drain",
+    )
     try:
         await shutdown_event.wait()
     except asyncio.CancelledError:
         pass
     finally:
+        drain_task.cancel()
+        try:
+            await drain_task
+        except asyncio.CancelledError:
+            pass
         await nc.drain()
     return 0
+
+
+def _build_consumer_config(config: ChatImageConfig) -> Any:
+    try:
+        from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy
+    except Exception as exc:
+        raise RuntimeError("nats-py JetStream API is required") from exc
+
+    return ConsumerConfig(
+        durable_name=config.nats.durable_name,
+        deliver_policy=DeliverPolicy.ALL,
+        ack_policy=AckPolicy.EXPLICIT,
+        ack_wait=config.nats.ack_wait_sec,
+        max_deliver=config.nats.max_deliver,
+        filter_subject=config.nats.subject,
+        deliver_group=config.nats.queue_group,
+    )
+
+
+async def _ensure_jetstream_stream(config: ChatImageConfig, js: Any) -> None:
+    try:
+        from nats.js.api import RetentionPolicy, StorageType, StreamConfig
+    except Exception as exc:
+        raise RuntimeError("nats-py JetStream API is required") from exc
+
+    desired_subjects = list(config.nats.stream_subjects)
+    try:
+        stream_info = await js.stream_info(config.nats.stream_name)
+    except Exception:
+        await js.add_stream(
+            config=StreamConfig(
+                name=config.nats.stream_name,
+                subjects=desired_subjects,
+                retention=RetentionPolicy.LIMITS,
+                storage=StorageType.FILE,
+            )
+        )
+        logger.info(
+            "Created JetStream stream: stream={} subjects={}",
+            config.nats.stream_name,
+            ",".join(config.nats.stream_subjects),
+        )
+    else:
+        existing_subjects = list(getattr(stream_info.config, "subjects", []) or [])
+        missing_subjects = [
+            subject for subject in desired_subjects if subject not in existing_subjects
+        ]
+        if missing_subjects:
+            stream_config = stream_info.config
+            stream_config.subjects = [*existing_subjects, *missing_subjects]
+            await js.update_stream(config=stream_config)
+            logger.info(
+                "Updated JetStream stream subjects: stream={} added_subjects={}",
+                config.nats.stream_name,
+                ",".join(missing_subjects),
+            )
+
+
+async def _periodic_queue_drain(
+    *, config: ChatImageConfig, stop_event: asyncio.Event
+) -> None:
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(
+                stop_event.wait(), timeout=config.tagger.drain_interval_sec
+            )
+            return
+        except asyncio.TimeoutError:
+            pass
+
+        if not await _is_tagger_healthy(config):
+            logger.warning(
+                "Skip periodic tagger queue drain because tagger is not healthy: base_url={}",
+                config.tagger.base_url,
+            )
+            continue
+
+        try:
+            summary = await run_tagger_once(config)
+        except Exception as exc:
+            logger.warning("Periodic tagger queue drain failed: {}", exc)
+            continue
+
+        if summary["picked"] > 0:
+            logger.info(
+                "Periodic tagger queue drain done: picked={} success={} failed={} requeued={}",
+                summary["picked"],
+                summary["success"],
+                summary["failed"],
+                summary["requeued"],
+            )
+
+
+async def _is_tagger_healthy(config: ChatImageConfig) -> bool:
+    base_url = config.tagger.base_url
+    if not config.tagger.enabled or not base_url:
+        return False
+    healthcheck_path = config.tagger.healthcheck_path
+    if not healthcheck_path.startswith("/"):
+        healthcheck_path = f"/{healthcheck_path}"
+    timeout = ClientTimeout(total=min(5.0, config.tagger.drain_interval_sec))
+    try:
+        async with ClientSession(timeout=timeout) as session:
+            async with session.get(f"{base_url}{healthcheck_path}") as response:
+                return 200 <= response.status < 300
+    except (asyncio.TimeoutError, ClientError):
+        return False
+
+
+async def _ack_or_nak_message(msg: Any, *, success: bool) -> None:
+    try:
+        metadata = getattr(msg, "metadata", None)
+    except Exception:
+        metadata = None
+    if metadata is None:
+        return
+    try:
+        if success:
+            await msg.ack()
+        else:
+            await msg.nak()
+    except Exception as exc:
+        logger.warning("Failed to ack NATS message on {}: {}", msg.subject, exc)
 
 
 def main() -> None:

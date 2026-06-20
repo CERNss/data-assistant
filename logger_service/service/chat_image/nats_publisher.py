@@ -57,6 +57,8 @@ NATS_PUBLISH_LATENCY_MS = (
 
 
 _nats_client: Any | None = None
+_jetstream_context: Any | None = None
+_ensured_streams: set[tuple[str, tuple[str, ...]]] = set()
 _nats_connect_lock = asyncio.Lock()
 
 
@@ -104,8 +106,18 @@ async def publish_tagger_task_with_result(
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         try:
             client = await _get_or_connect_nats(config)
-            await client.publish(config.nats.subject, data)
-            await client.flush(timeout=config.nats.publish_timeout_sec)
+            if config.nats.jetstream_enabled:
+                js = await _get_or_create_jetstream(config, client)
+                await _ensure_stream(config, js)
+                await js.publish(
+                    config.nats.subject,
+                    data,
+                    timeout=config.nats.publish_timeout_sec,
+                    stream=config.nats.stream_name,
+                )
+            else:
+                await client.publish(config.nats.subject, data)
+                await client.flush(timeout=config.nats.publish_timeout_sec)
             _record_publish_metrics(
                 outcome="published",
                 subject=config.nats.subject,
@@ -128,7 +140,7 @@ async def publish_tagger_task_with_result(
 
 
 async def close_nats_publisher() -> None:
-    global _nats_client
+    global _ensured_streams, _jetstream_context, _nats_client
     async with _nats_connect_lock:
         if _nats_client is None:
             return
@@ -138,11 +150,13 @@ async def close_nats_publisher() -> None:
         except Exception as exc:
             logger.warning("Failed to drain NATS publisher: {}", exc)
         finally:
+            _ensured_streams = set()
+            _jetstream_context = None
             _nats_client = None
 
 
 async def _get_or_connect_nats(config: ChatImageConfig) -> Any:
-    global _nats_client
+    global _ensured_streams, _jetstream_context, _nats_client
     if _nats_client is not None and getattr(_nats_client, "is_connected", False):
         return _nats_client
 
@@ -160,6 +174,8 @@ async def _get_or_connect_nats(config: ChatImageConfig) -> Any:
             name=f"{config.nats.client_name}-publisher",
             connect_timeout=config.nats.connect_timeout_sec,
         )
+        _ensured_streams = set()
+        _jetstream_context = None
         _nats_client = client
         logger.info(
             "Connected NATS publisher: servers={} subject={}",
@@ -167,6 +183,64 @@ async def _get_or_connect_nats(config: ChatImageConfig) -> Any:
             config.nats.subject,
         )
         return _nats_client
+
+
+async def _get_or_create_jetstream(config: ChatImageConfig, client: Any) -> Any:
+    global _jetstream_context
+    if _jetstream_context is not None:
+        return _jetstream_context
+    _jetstream_context = client.jetstream()
+    logger.info(
+        "Using JetStream publisher: stream={} subjects={}",
+        config.nats.stream_name,
+        ",".join(config.nats.stream_subjects),
+    )
+    return _jetstream_context
+
+
+async def _ensure_stream(config: ChatImageConfig, js: Any) -> None:
+    stream_key = (config.nats.stream_name, config.nats.stream_subjects)
+    if stream_key in _ensured_streams:
+        return
+
+    try:
+        from nats.js.api import RetentionPolicy, StorageType, StreamConfig
+    except Exception as exc:
+        raise RuntimeError("nats-py JetStream API is required") from exc
+
+    desired_subjects = list(config.nats.stream_subjects)
+    try:
+        stream_info = await js.stream_info(config.nats.stream_name)
+    except Exception:
+        await js.add_stream(
+            config=StreamConfig(
+                name=config.nats.stream_name,
+                subjects=desired_subjects,
+                retention=RetentionPolicy.LIMITS,
+                storage=StorageType.FILE,
+            )
+        )
+        logger.info(
+            "Created JetStream stream: stream={} subjects={}",
+            config.nats.stream_name,
+            ",".join(config.nats.stream_subjects),
+        )
+    else:
+        existing_subjects = list(getattr(stream_info.config, "subjects", []) or [])
+        missing_subjects = [
+            subject for subject in desired_subjects if subject not in existing_subjects
+        ]
+        if missing_subjects:
+            stream_config = stream_info.config
+            stream_config.subjects = [*existing_subjects, *missing_subjects]
+            await js.update_stream(config=stream_config)
+            logger.info(
+                "Updated JetStream stream subjects: stream={} added_subjects={}",
+                config.nats.stream_name,
+                ",".join(missing_subjects),
+            )
+
+    _ensured_streams.add(stream_key)
 
 
 def _record_publish_metrics(*, outcome: str, subject: str, started_at: float) -> None:

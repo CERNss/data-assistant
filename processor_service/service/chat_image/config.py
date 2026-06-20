@@ -81,6 +81,8 @@ def _env_optional_float(name: str, *, minimum: float = 0.0) -> float | None:
 class TaggerPipelineConfig:
     enabled: bool
     auto_run: bool
+    drain_interval_sec: float
+    healthcheck_path: str
     base_url: str | None
     threshold: float | None
     use_chinese_name: bool | None
@@ -100,6 +102,12 @@ class NatsTaskBusConfig:
     queue_group: str
     client_name: str
     connect_timeout_sec: float
+    jetstream_enabled: bool
+    stream_name: str
+    stream_subjects: tuple[str, ...]
+    durable_name: str
+    ack_wait_sec: float
+    max_deliver: int
 
 
 @dataclass(frozen=True)
@@ -113,6 +121,18 @@ def load_chat_image_config() -> ChatImageConfig:
     tagger_base_url = os.getenv("CHAT_IMAGE_TAGGER_BASE_URL", "").strip()
     raw_nats_servers = os.getenv("CHAT_IMAGE_NATS_SERVERS", "nats://127.0.0.1:4222")
     nats_servers = tuple(v.strip() for v in raw_nats_servers.split(",") if v.strip())
+    nats_subject = (
+        os.getenv("CHAT_IMAGE_NATS_SUBJECT", "chat.image.tagger.task").strip()
+        or "chat.image.tagger.task"
+    )
+    raw_stream_subjects = tuple(
+        v.strip()
+        for v in os.getenv("CHAT_IMAGE_NATS_STREAM_SUBJECTS", "").split(",")
+        if v.strip()
+    )
+    stream_subjects = raw_stream_subjects or (nats_subject,)
+    if nats_subject not in stream_subjects:
+        stream_subjects = (nats_subject, *stream_subjects)
     return ChatImageConfig(
         save_root=Path(
             os.getenv(
@@ -123,10 +143,7 @@ def load_chat_image_config() -> ChatImageConfig:
         nats=NatsTaskBusConfig(
             enabled=_env_bool("CHAT_IMAGE_NATS_ENABLED", False),
             servers=nats_servers or ("nats://127.0.0.1:4222",),
-            subject=os.getenv(
-                "CHAT_IMAGE_NATS_SUBJECT", "chat.image.tagger.task"
-            ).strip()
-            or "chat.image.tagger.task",
+            subject=nats_subject,
             queue_group=os.getenv(
                 "CHAT_IMAGE_NATS_QUEUE_GROUP", "chat-image-tagger-workers"
             ).strip()
@@ -138,10 +155,29 @@ def load_chat_image_config() -> ChatImageConfig:
             connect_timeout_sec=_env_float(
                 "CHAT_IMAGE_NATS_CONNECT_TIMEOUT_SEC", 5.0, minimum=0.1
             ),
+            jetstream_enabled=_env_bool("CHAT_IMAGE_NATS_JETSTREAM_ENABLED", True),
+            stream_name=os.getenv(
+                "CHAT_IMAGE_NATS_STREAM", "CHAT_IMAGE_TAGGER_TASKS"
+            ).strip()
+            or "CHAT_IMAGE_TAGGER_TASKS",
+            stream_subjects=stream_subjects,
+            durable_name=os.getenv(
+                "CHAT_IMAGE_NATS_DURABLE", "chat-image-tagger-worker"
+            ).strip()
+            or "chat-image-tagger-worker",
+            ack_wait_sec=_env_float("CHAT_IMAGE_NATS_ACK_WAIT_SEC", 120.0, minimum=1.0),
+            max_deliver=_env_int("CHAT_IMAGE_NATS_MAX_DELIVER", 10, minimum=1),
         ),
         tagger=TaggerPipelineConfig(
             enabled=_env_bool("CHAT_IMAGE_TAGGER_ENABLED", False),
             auto_run=_env_bool("CHAT_IMAGE_TAGGER_AUTO_RUN", False),
+            drain_interval_sec=_env_float(
+                "CHAT_IMAGE_TAGGER_DRAIN_INTERVAL_SEC", 10.0, minimum=0.5
+            ),
+            healthcheck_path=(
+                os.getenv("CHAT_IMAGE_TAGGER_HEALTHCHECK_PATH", "/healthz").strip()
+                or "/healthz"
+            ),
             base_url=tagger_base_url.rstrip("/") or None,
             threshold=_env_optional_float("CHAT_IMAGE_TAGGER_THRESHOLD", minimum=0.0),
             use_chinese_name=_env_optional_bool("CHAT_IMAGE_TAGGER_USE_CHINESE_NAME"),
